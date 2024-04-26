@@ -338,7 +338,6 @@ def cotrack_online(
         is_first_step,
         queries=queries,
     )
-    print()
     tracks = pred_tracks.squeeze().cpu().numpy()
     return tracks.reshape((n_frames, n_animals, n_keypoints, 2))
 
