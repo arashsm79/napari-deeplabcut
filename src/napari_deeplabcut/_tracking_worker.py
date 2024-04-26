@@ -110,23 +110,57 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             return False
         return True
 
+    def _display_status_report(self):
+        """Adds a text log, a progress bar and a "save log" button on the left side of the viewer (usually when starting a worker)."""
+
+        if self.container_docked:
+            self.log.clear()
+        elif not self.container_docked:
+            add_widgets(
+                self.report_container.layout,
+                [self.progress, self.log],
+            )
+            self.report_container.setLayout(self.report_container.layout)
+            report_dock = self._viewer.window.add_dock_widget(
+                self.report_container,
+                name="Status report",
+                area="left",
+                allowed_areas=["left", "right"],
+            )
+            report_dock._close_btn = False
+
+            # self.docked_widgets.append(report_dock)
+            self.container_docked = True
+
+        self.log.setVisible(True)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+
+    def _update_progress_bar(self, current_frame, total_frame):
+        """Update the progress bar."""
+        pbar_value = (current_frame / total_frame) * 100
+        if pbar_value > 100:
+            pbar_value = 100
+
+        self.progress.setValue(pbar_value)
+
     def _start(self):
         """Start the tracking process."""
-        # TODO : implement the tracking process
         print("Started tracking")
-        print(f"Is ready : {self.check_ready()}")
-        # TODO : setup worker
+
         ### Below is code to start the worker and update the button for the use to start/stop the tracking process
-        if not self.check_ready():
-            err = "Aborting, please choose valid inputs"
-            self.log.print_and_log(err)
-            raise ValueError(err)
+        # if not self._check_ready():
+        #     err = "Aborting, please choose valid inputs"
+        #     self.log.print_and_log(err)
+        #     raise ValueError(err)
 
         if self._worker is not None:
             if self._worker.is_running:
                 pass
             else:
                 self._worker.start()
+                self.start_button.setText("Running... Click to stop")
+
         else:
             self.log.print_and_log("Starting...")
             self.log.print_and_log("*" * 20)
@@ -136,13 +170,15 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             self.log.print_and_log(
                 "Stop request, waiting for next inference..."
             )
+            self.start_button.setText("Stopping...")
             self._worker.quit()
         else:  # once worker is started, update buttons
             self._worker.start()
+            self.start_button.setText("Running...  Click to stop")
 
     def _setup_worker(self):
-
         self._worker = TrackingWorker()
+
         self._worker.started.connect(self._on_start)
 
         self._worker.log_signal.connect(self.log.print_and_log)
@@ -161,18 +197,18 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         self.log.print_and_log(f"frames started at {frames}")
 
 
-        
-
     def _on_yield(self, results):
         # TODO : display the results in the viewer
-        pass
+        # Testing version where an int i is yielded
+        ############################
+        self.log.print_and_log(f"Yielded {results}")
+        self._update_progress_bar(results, 10)
+        ############################
 
     def _on_start(self):
         """Catches start signal from worker to call :py:func:`~display_status_report`."""
-        # self.display_status_report()
-        # self._set_self_config()
+        self._display_status_report()
         self.log.print_and_log(f"Worker started at {get_time()}")
-        #self.log.print_and_log(f"Saving results to : {self.results_path}")
         self.log.print_and_log("Worker is running...")
 
     def _on_error(self, error):
@@ -187,10 +223,10 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         """Catches finished signal from worker, resets workspace for next run."""
         self.log.print_and_log(f"\nWorker finished at {get_time()}")
         self.log.print_and_log("*" * 20)
+        self.start_button.setText("Start")
 
         self._worker = None
-        self._worker_config = None
-        # self.empty_cuda_cache()
+
         return True  # signal clean exit
 
 
@@ -227,7 +263,8 @@ class TrackingWorker(GeneratorWorker):
 
     def __init__(self, config=None):
         """Creates a TrackingWorker."""
-        super().__init__(self.run_tracking)
+        # super().__init__(self.run_tracking) #### TODO MUST BE CHANGED WHEN REAL TRACKING IS IMPLEMENTED
+        super().__init__(self.fake_tracking)
         self._signals = LogSignal()
         self.log_signal = self._signals.log_signal
         self.log_w_replace_signal = self._signals.log_w_replace_signal
@@ -255,9 +292,13 @@ class TrackingWorker(GeneratorWorker):
     ):
         """Run the tracking."""
         self.log("Started tracking")
-        tracks = track_mock(video, keypoints)
-        self.log("Finished tracking")
-        yield tracks
+
+    def fake_tracking(self):
+        """Fake tracking for testing purposes."""
+        for i in range(10):
+            self.log(f"Tracking frame {i}")
+            yield i + 1
+
 
 
 def track_mock(
