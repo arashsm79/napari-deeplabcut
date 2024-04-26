@@ -7,6 +7,8 @@ from pathlib import Path
 
 import napari
 import numpy as np
+import torch
+from cotracker.predictor import CoTrackerOnlinePredictor
 from napari._qt.qthreading import GeneratorWorker
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
@@ -255,7 +257,8 @@ class TrackingWorker(GeneratorWorker):
     ):
         """Run the tracking."""
         self.log("Started tracking")
-        tracks = track_mock(video, keypoints)
+        # tracks = track_mock(video, keypoints)
+        tracks = cotrack_online(video, keypoints)
         self.log("Finished tracking")
         yield tracks
 
@@ -281,6 +284,63 @@ def track_mock(
         position of each keypoint in each frame of the video
     """
     return np.repeat(keypoints, (len(video), 1, 1, 1))
+
+
+# TODO: REQUIRES TO RUN pip install src/co-tracker
+def cotrack_online(
+    video: np.ndarray,
+    keypoints: np.ndarray,
+    device: str = "cpu",
+) -> np.ndarray:
+    def _process_step(window_frames, is_first_step, queries):
+        video_chunk = (
+            torch.tensor(np.stack(window_frames[-model.step * 2:]), device=device)
+            .float()
+            .permute(0, 3, 1, 2)[None]
+        )  # (1, T, 3, H, W)
+        return model(video_chunk, is_first_step=is_first_step, queries=queries[None])
+
+    # model = CoTrackerOnlinePredictor(
+    #     checkpoint=Path(
+    #       "/home/lucas/Projects/deeplabcut-tracking/models/cotracker2.pth"
+    #     )
+    # )
+    n_frames = len(video)
+    n_animals, n_keypoints = keypoints.shape[:2]
+
+    model = torch.hub.load("facebookresearch/co-tracker", "cotracker2_online")
+    model = model.to(device)
+    video = torch.from_numpy(video).permute(0, 3, 1, 2).unsqueeze(0).float()
+    window_frames = []
+
+    queries = np.zeros((n_animals * n_keypoints, 3))
+    queries[:, 1:] = keypoints.reshape((-1, 2))
+    queries = torch.from_numpy(queries).to(device).float()
+
+    # Iterating over video frames, processing one window at a time:
+    is_first_step = True
+    i = 0
+    for i, frame in enumerate(video[0]):
+        frame = frame.permute(1, 2, 0)
+        if i % model.step == 0 and i != 0:
+            pred_tracks, pred_visibility = _process_step(
+                window_frames,
+                is_first_step,
+                queries=queries,
+            )
+            is_first_step = False
+        window_frames.append(frame)
+
+    # Processing final frames in case video length is not a multiple of model.step
+    # TODO: Use visibility
+    pred_tracks, pred_visibility = _process_step(
+        window_frames[-(i % model.step) - model.step - 1:],
+        is_first_step,
+        queries=queries,
+    )
+    print()
+    tracks = pred_tracks.squeeze().cpu().numpy()
+    return tracks.reshape((n_frames, n_animals, n_keypoints, 2))
 
 
 def track_cotracker(
@@ -323,3 +383,68 @@ def track_pips(
         position of each keypoint in each frame of the video
     """
     # TODO: Implement your code here!
+
+
+if __name__ == "__main__":
+    import glob
+    import json
+    import imageio
+    import os
+
+    def load_video_from_frames_folder(video_path):
+        if os.path.isdir(video_path):
+            # list the frames in video_path
+            # get rgb frames
+            filenames = glob.glob(f'{video_path}/*.jpg')
+            # sort the filenames by filename number
+            video_frames = sorted(
+                filenames, key=lambda x: int(x.split('/')[-1].split('.')[0])
+                )
+
+            frames = []
+            for im in video_frames:
+                im = imageio.v2.imread(im)
+                frames.append(im)  # H, W, C
+            rgbs = np.stack(frames, axis=0)
+            rgbs = rgbs[:, :, :, ::-1].copy()
+            return rgbs
+        else:
+            raise ValueError(f'video_path {video_path} is not a directory')
+
+
+    def load_init_pose(data_path):
+
+        with open(data_path, "r") as f:
+            data = json.load(f)
+
+        img_h = data['imageHeight']
+        img_w = data['imageWidth']
+
+        labels = []
+        for shape in data['shapes']:
+            labels.append(int(shape["group_id"]))
+        init_frame_kpts = np.zeros((max(labels), 17, 2))
+
+        for shape in data["shapes"]:
+            p = np.array(shape["points"])
+            if shape["shape_type"] == "point" and shape["label"] != "snow":
+                init_frame_kpts[
+                    int(shape["group_id"]) - 1, int(shape["label"]) - 1, 0] = p[:, 0]
+                init_frame_kpts[
+                    int(shape["group_id"]) - 1, int(shape["label"]) - 1, 1] = p[:, 1]
+
+        return init_frame_kpts, img_h, img_w
+
+    video = load_video_from_frames_folder(
+        "/Users/niels/Documents/upamathis/events/2024_04_lemanic_sv_hackathon/deeplabcut-tracking/data 2/7chimps/v2c5"
+    )
+    keypoints, _, _ = load_init_pose(
+        "/Users/niels/Documents/upamathis/events/2024_04_lemanic_sv_hackathon/deeplabcut-tracking/data 2/7chimps/v2c5/0000.json"
+    )
+    print(keypoints.shape)
+    tracks = cotrack_online(
+        video,
+        keypoints,
+        device="cpu",
+    )
+    print(tracks.shape)
