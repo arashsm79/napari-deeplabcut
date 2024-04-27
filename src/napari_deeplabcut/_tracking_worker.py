@@ -28,22 +28,35 @@ from napari_deeplabcut._tracking_utils import (
     add_widgets,
     get_time,
 )
-from napari.layers.utils.layer_utils import _features_to_properties
 
+### -------- Config -------- ###
 
 @dataclass
 class TrackingConfig:
-    method : str = "CoTracker"
+    method : str = "CoTracker" # change when adding PIPS++
     ### Data ###
     video: np.ndarray = None
     keypoints: np.ndarray = None
+    result_layer: napari.layers.Points = None
+    ### Metadata ###
+    root: str = None # path to the video
+    paths: list = None # list of paths to the video frames
+    bodyparts: list = None # list of bodyparts
+    individuals_ids: list = None # list of individuals
     ### Config from data ###
     n_frames: int = None
     n_animals: int = None
     n_keypoints: int = None
     ### User config ###
     device: str = "cpu"
+    
+@dataclass
+class TrackingResults:
+    """Used to update the results and progress bar. Is yielded by the worker."""
+    result_keypoints: np.ndarray = None
+    layer_metadata: dict = None
 
+### -------- Tracking Widget -------- ###
 
 class TrackingModule(QWidget, metaclass=QWidgetSingleton):
     """Plugin for tracking."""
@@ -198,25 +211,36 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         properties = self.keypoint_layer_dropdown.layer().properties
         keypoint_cord = self.keypoint_layer_dropdown.layer_data()
         frames = self.video_layer_dropdown.layer_data()
-
-        self._worker = TrackingWorker(
-            # metadata["metadata"]["root"],
-            # metadata["metadata"]["images"],
-            metadata["root"],
-            metadata["paths"],
-            properties["label"],
-            properties["id"],
-            frames,
-            keypoint_cord,
+        
+        config = TrackingConfig(
+            ### Data ###
+            video=frames,
+            keypoints=keypoint_cord,
+            result_layer=self.keypoint_layer_dropdown.layer(),
+            ### Metadata ###
+            root=metadata["root"],
+            paths=metadata["paths"],
+            bodyparts=properties["label"],
+            individuals_ids=properties["id"],
+            ### Config from data ###
+            ##### FIXME : add proper calculation of these values
+            n_frames=None,
+            n_animals=None,
+            n_keypoints=None,
+            #####
+            ### User config ###
+            device="cpu", # TODO add choice in the GUI later
         )
+        
+        self._worker = TrackingWorker(config)
 
-        self._worker.started.connect(self._on_start)
-
+        # Connect the worker to the logging system
         self._worker.log_signal.connect(self.log.print_and_log)
         self._worker.log_w_replace_signal.connect(self.log.replace_last_line)
         self._worker.warn_signal.connect(self.log.warn)
         self._worker.error_signal.connect(self.log.error)
-
+        # Connect the worker to the viewer
+        self._worker.started.connect(self._on_start)
         self._worker.yielded.connect(partial(self._on_yield))
         self._worker.errored.connect(partial(self._on_error))
         self._worker.finished.connect(self._on_finish)
@@ -237,9 +261,9 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             keypoint_data,
             name="keypoints_hdf_test",
             metadata=metadata["metadata"],
-            # features=metadata["properties"],
+            # features=metadata["properties"], # not needed AFAIK
             properties=metadata["properties"],
-            ### display properties ###
+            ### Display properties ###
             face_color=metadata["face_color"],
             face_color_cycle=metadata["face_color_cycle"],
             face_colormap=metadata["face_colormap"],
@@ -287,20 +311,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
 ### -------- Tracking worker -------- ###
 
 
-# Config dataclass
-@dataclass
-class TrackingConfig:
-    
-    method : str = "CoTracker"
-    ### Data ###
-    video: np.ndarray = None
-    keypoints: np.ndarray = None
-    ### Config from data ###
-    n_frames: int = None
-    n_animals: int = None
-    n_keypoints: int = None
-    ### User config ###
-    device: str = "cpu"
+
 
 class LogSignal(WorkerBaseSignals):
     """Signal to send messages to be logged from another thread.
@@ -330,18 +341,21 @@ class LogSignal(WorkerBaseSignals):
 class TrackingWorker(GeneratorWorker):
     """A custom worker to run tracking in."""
 
-    def __init__(self, root, image_paths, bodyparts, individuals, video, keypoints):
+    def __init__(self, config: TrackingConfig):
+    # def __init__(self, root, image_paths, bodyparts, individuals, video, keypoints):
         """Creates a TrackingWorker."""
         super().__init__(self.run_tracking)  
-        self._root = root
+        self.config = config
         
-        self.config = None  # config  # use if needed
+        self.device = config.device
         
-        self._image_paths = image_paths
-        self._bodyparts = bodyparts
-        self._individuals = individuals
-        self._video = video
-        self._keypoints = keypoints
+        self._root = config.root
+        self._image_paths = config.paths
+        self._bodyparts = config.bodyparts
+        self._individuals = config.individuals_ids
+        self._video = config.video
+        self._keypoints = config.keypoints
+        
         #### Signals ####
         self._signals = LogSignal()
         self.log_signal = self._signals.log_signal
@@ -361,6 +375,10 @@ class TrackingWorker(GeneratorWorker):
     def warn(self, msg):
         """Log a warning."""
         self.warn_signal.emit(msg)
+    
+    @classmethod
+    def create_from_config(cls, config: TrackingConfig):
+        return cls(config)
 
     def run_tracking(
         self,
