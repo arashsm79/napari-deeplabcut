@@ -9,7 +9,6 @@ import napari
 import numpy as np
 import pandas as pd
 import torch
-from cotracker.predictor import CoTrackerOnlinePredictor
 from napari._qt.qthreading import GeneratorWorker
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
@@ -19,7 +18,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from superqt.utils._qthreading import GeneratorWorkerSignals, WorkerBaseSignals
+from superqt.utils._qthreading import WorkerBaseSignals
 
 from napari_deeplabcut._tracking_utils import (
     ContainerWidget,
@@ -30,6 +29,7 @@ from napari_deeplabcut._tracking_utils import (
     get_time,
 )
 from napari.layers.utils.layer_utils import _features_to_properties
+
 
 @dataclass
 class TrackingConfig:
@@ -43,6 +43,7 @@ class TrackingConfig:
     n_keypoints: int = None
     ### User config ###
     device: str = "cpu"
+
 
 class TrackingModule(QWidget, metaclass=QWidgetSingleton):
     """Plugin for tracking."""
@@ -385,10 +386,10 @@ class TrackingWorker(GeneratorWorker):
         levels = ["scorer", "individuals", "bodyparts", "coords"]
         kpt_entries = ["x", "y"]
         columns = []
-        # for i in self._individuals:
-        #     for b in self._bodyparts:
-        #         columns += [(scorer, i, b, entry) for entry in kpt_entries]
-        for i, b in zip(self._individuals[:8], self._bodyparts[:8]):
+        num_animals = 4  # FIXME GET FROM CONFIG
+        num_bodyparts = 4  # FIXME GET FROM CONFIG
+        clip = num_bodyparts * num_animals  # FIXME: DO AUTOMATICALLY
+        for i, b in zip(self._individuals[:clip], self._bodyparts[:clip]):
             columns += [(scorer, i, b, entry) for entry in kpt_entries]
 
         index = []
@@ -438,7 +439,10 @@ def cotrack_online(
         f.write(f"{keypoints}\n")
         f.write(f"k={k.shape}\n")
         f.write(f"{k}\n")
-    keypoints = k.reshape((2, 4, 2))
+
+    num_animals = 4  # FIXME GET FROM CONFIG
+    num_bodyparts = 4  # FIXME GET FROM CONFIG
+    keypoints = k.reshape((num_animals, num_bodyparts, 2))
     k = np.zeros(keypoints.shape)
     k[..., 0] = keypoints[..., 1]
     k[..., 1] = keypoints[..., 0]
