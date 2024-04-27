@@ -4,7 +4,7 @@
 # - Prepare I/O with the actual tracking backend
 from functools import partial
 from pathlib import Path
-
+from dataclasses import dataclass
 import napari
 import numpy as np
 import pandas as pd
@@ -31,6 +31,19 @@ from napari_deeplabcut._tracking_utils import (
 )
 from napari.layers.utils.layer_utils import _features_to_properties
 
+@dataclass
+class TrackingConfig:
+    method : str = "CoTracker"
+    ### Data ###
+    video: np.ndarray = None
+    keypoints: np.ndarray = None
+    ### Config from data ###
+    n_frames: int = None
+    n_animals: int = None
+    n_keypoints: int = None
+    ### User config ###
+    device: str = "cpu"
+
 class TrackingModule(QWidget, metaclass=QWidgetSingleton):
     """Plugin for tracking."""
 
@@ -56,7 +69,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         self.start_button = QPushButton("Start tracking")
         self.start_button.clicked.connect(self._start)
         #############################
-        # status report docked widget
+        # Status report docked widget
         self.container_docked = False  # check if already docked
 
         self.report_container = ContainerWidget(l=10, t=5, r=5, b=5)
@@ -273,6 +286,21 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
 ### -------- Tracking worker -------- ###
 
 
+# Config dataclass
+@dataclass
+class TrackingConfig:
+    
+    method : str = "CoTracker"
+    ### Data ###
+    video: np.ndarray = None
+    keypoints: np.ndarray = None
+    ### Config from data ###
+    n_frames: int = None
+    n_animals: int = None
+    n_keypoints: int = None
+    ### User config ###
+    device: str = "cpu"
+
 class LogSignal(WorkerBaseSignals):
     """Signal to send messages to be logged from another thread.
 
@@ -303,21 +331,23 @@ class TrackingWorker(GeneratorWorker):
 
     def __init__(self, root, image_paths, bodyparts, individuals, video, keypoints):
         """Creates a TrackingWorker."""
-        super().__init__(self.run_tracking)  # TODO MUST BE CHANGED WHEN REAL TRACKING IS IMPLEMENTED
-        # super().__init__(self.fake_tracking)
+        super().__init__(self.run_tracking)  
         self._root = root
+        
+        self.config = None  # config  # use if needed
+        
         self._image_paths = image_paths
         self._bodyparts = bodyparts
         self._individuals = individuals
         self._video = video
         self._keypoints = keypoints
+        #### Signals ####
         self._signals = LogSignal()
         self.log_signal = self._signals.log_signal
         self.log_w_replace_signal = self._signals.log_w_replace_signal
         self.warn_signal = self._signals.warn_signal
         self.error_signal = self._signals.error_signal
 
-        self.config = None  # config  # use if needed
 
     def log(self, msg):
         """Log a message."""
