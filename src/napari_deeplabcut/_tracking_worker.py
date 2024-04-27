@@ -40,6 +40,8 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         self._viewer = napari_viewer
         self._worker = None
         self._keypoint_layer = None
+        self.is_retrack = True
+        self.prev_frame = None
         ### Widgets ###
         self.video_layer_dropdown = LayerSelecter(
             self._viewer,
@@ -86,6 +88,9 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             if l.name == layer_name:
                 self._keypoint_layer = l
                 break
+
+    def get_current_frame(self):
+        return self._viewer.dims.current_step[0]
 
     def _build(self):
         """Create a TrackingModule plugin with :
@@ -180,10 +185,21 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             self.start_button.setText("Running...  Click to stop")
 
     def _setup_worker(self):
+
         metadata = self.keypoint_layer_dropdown.layer().metadata
         properties = self.keypoint_layer_dropdown.layer().properties
-        keypoint_cord = self.keypoint_layer_dropdown.layer_data()
-        frames = self.video_layer_dropdown.layer_data()
+        if self.is_retrack:
+            print("retracking!")
+            curr_frame = self.get_current_frame()
+            self.prev_frame = curr_frame
+            keypoint_cord = self.keypoint_layer_dropdown.layer_data()
+            keypoint_cord = keypoint_cord[keypoint_cord[:, 0] ==  curr_frame, :]
+            keypoint_cord[:, 0] = 0
+            frames = self.video_layer_dropdown.layer_data()[curr_frame:]
+        else:
+            keypoint_cord = self.keypoint_layer_dropdown.layer_data()
+            frames = self.video_layer_dropdown.layer_data()
+
 
         self._worker = TrackingWorker(
             # metadata["metadata"]["root"],
@@ -237,6 +253,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         )
 
     def _on_yield(self, results):
+        self.is_retrack = True
         # TODO : display the results in the viewer
         # Testing version where an int i is yielded
         self._display_results(results)
@@ -301,7 +318,7 @@ class LogSignal(WorkerBaseSignals):
 class TrackingWorker(GeneratorWorker):
     """A custom worker to run tracking in."""
 
-    def __init__(self, root, image_paths, bodyparts, individuals, video, keypoints):
+    def __init__(self, root, image_paths, bodyparts, individuals, video, keypoints, curr_frame = None):
         """Creates a TrackingWorker."""
         super().__init__(self.run_tracking)  # TODO MUST BE CHANGED WHEN REAL TRACKING IS IMPLEMENTED
         # super().__init__(self.fake_tracking)
@@ -312,6 +329,7 @@ class TrackingWorker(GeneratorWorker):
         self._video = video
         self._keypoints = keypoints
         self._signals = LogSignal()
+        self.curr_frame = curr_frame
         self.log_signal = self._signals.log_signal
         self.log_w_replace_signal = self._signals.log_w_replace_signal
         self.warn_signal = self._signals.warn_signal
@@ -370,12 +388,17 @@ class TrackingWorker(GeneratorWorker):
             else:
                 raise ValueError(f"Incorrect image path format: {img_path}")
 
+        index = index[-tracks.reshape((len(tracks), -1)).shape[0]:]
         with open("log_df.txt", "w") as f:
             f.write(f"{tracks.reshape((len(tracks), -1)).shape}\n")
             f.write(f"{len(index)}\n")
             f.write(f"{len(columns)}\n")
             f.write(f"{self._individuals}\n")
             f.write(f"{self._bodyparts}\n")
+            f.write(f"index len: {len(index)}\n")
+            f.write(f"index: {index}\n")
+            f.write(f"index: {tracks}\n")
+            f.write(f"track len: {len(tracks)}\n")
 
         dataframe = pd.DataFrame(
             data=tracks.reshape((len(tracks), -1)),
@@ -396,7 +419,7 @@ def cotrack_online(
     w,
     video,
     keypoints,
-    device: str = "cpu",
+    device: str = "cuda",
 ) -> np.ndarray:
     w.log("COTRACKING")
     w.log(video.shape)
