@@ -20,6 +20,7 @@ from qtpy.QtWidgets import (
 )
 from superqt.utils._qthreading import WorkerBaseSignals
 
+from napari_deeplabcut._reader import read_hdf
 from napari_deeplabcut._tracking_utils import (
     ContainerWidget,
     LayerSelecter,
@@ -33,11 +34,10 @@ from napari_deeplabcut._tracking_utils import (
 
 @dataclass
 class TrackingConfig:
-    method : str = "CoTracker" # change when adding PIPS++
     ### Data ###
     video: np.ndarray
     keypoints: np.ndarray 
-    result_layer: napari.layers.Points 
+    # result_layer: napari.layers.Points 
     ### Metadata ###
     root: str  # path to the video
     paths: list # list of paths to the video frames
@@ -48,10 +48,12 @@ class TrackingConfig:
     n_animals: int
     n_keypoints: int
     ### User config ###
+    retrack_frame: int = None
+    method : str = "CoTracker" # change when adding PIPS++
     device: str = "cpu"
     
 @dataclass
-class TrackingResults:
+class TrackingResults: # Add anything relevant to be yielded by the worker here
     """Used to update the results and progress bar. Is yielded by the worker."""
     result_keypoints: np.ndarray = None
     layer_metadata: dict = None
@@ -64,9 +66,14 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
     def __init__(self, napari_viewer: "napari.viewer.Viewer", parent=None):
         """Creates a widget with links to documentation and about page."""
         super().__init__(parent=parent)
-        self._viewer = napari_viewer
-        self._worker = None
-        self._keypoint_layer = None
+    
+        self._viewer : napari.viewer.Viewer = napari_viewer
+        self._worker : TrackingWorker = None
+        
+        self._keypoint_layer : napari.layers.Points = None
+        self._video_layer : napari.layers.Image = None
+        
+        self.result_layer : napari.layers.Points = None # used to store the results of the tracking
         ### Widgets ###
         self.video_layer_dropdown = LayerSelecter(
             self._viewer,
@@ -207,10 +214,13 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             self.start_button.setText("Running...  Click to stop")
 
     def _setup_worker(self):
-        metadata = self.keypoint_layer_dropdown.layer().metadata
-        properties = self.keypoint_layer_dropdown.layer().properties
-        keypoint_cord = self.keypoint_layer_dropdown.layer_data()
-        frames = self.video_layer_dropdown.layer_data()
+        self._keypoint_layer = self.keypoint_layer_dropdown.layer()
+        self.video_layer = self.video_layer_dropdown.layer()
+        
+        metadata = self._keypoint_layer.metadata
+        properties = self._keypoint_layer.properties
+        keypoint_cord = self._keypoint_layer.data
+        frames = self.video_layer.data
         
         config = TrackingConfig(
             ### Data ###
@@ -245,24 +255,18 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         self._worker.errored.connect(partial(self._on_error))
         self._worker.finished.connect(self._on_finish)
 
-    def _display_results(self, results):
-        """Display the results in the viewer, using the method already implemented in the viewer."""
-        # path_test = "C:/Users/Cyril/Desktop/Code/DeepLabCut/examples/openfield-Pranav-2018-10-30/labeled-data/m4s1/CollectedData_Pranav.h5"
-        from napari_deeplabcut._reader import read_hdf
-
-        path_test = str(results)
-        keypoint_data, metadata, _ = read_hdf(path_test)[0]
-        # hdf data contains : keypoint data, metadata, and "points"
-        # we want to create a points layer from the keypoint data
-        # layer properties (dict) should be populated with metadata
-        print(metadata)
-        layer = self._viewer.add_points(
+    
+    def _add_results_layer(self, keypoint_layer):
+        """Create a Points layer with all the metadata taken from the keypoint layer."""
+        metadata = keypoint_layer.metadata
+        properties = keypoint_layer.properties
+        keypoint_cord = keypoint_layer.data
+        return self._viewer.add_points(
             ### data ###
-            keypoint_data,
-            name="keypoints_hdf_test",
-            metadata=metadata["metadata"],
-            # features=metadata["properties"], # not needed AFAIK
-            properties=metadata["properties"],
+            keypoint_cord,
+            name="Tracking results",
+            metadata=metadata,
+            properties=properties,
             ### Display properties ###
             face_color=metadata["face_color"],
             face_color_cycle=metadata["face_color_cycle"],
@@ -274,17 +278,47 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             size=metadata["size"],
         )
 
+    def _display_results(self, results):
+        """Display the results in the viewer, updating the results layer."""
+        self.result_layer.data = results.result_keypoints
+        
+        ### Previous test implementation using a hdf file ###
+        # path_test = str(results)
+        # keypoint_data, metadata, _ = read_hdf(path_test)[0]
+        # # hdf data contains : keypoint data, metadata, and "points"
+        # # we want to create a points layer from the keypoint data
+        # # layer properties (dict) should be populated with metadata
+        # print(metadata)
+        # layer = self._viewer.add_points(
+        #     ### data ###
+        #     keypoint_data,
+        #     name="keypoints_hdf_test",
+        #     metadata=metadata["metadata"],
+        #     # features=metadata["properties"], # not needed AFAIK
+        #     properties=metadata["properties"],
+        #     ### Display properties ###
+        #     face_color=metadata["face_color"],
+        #     face_color_cycle=metadata["face_color_cycle"],
+        #     face_colormap=metadata["face_colormap"],
+        #     edge_color=metadata["edge_color"],
+        #     edge_color_cycle=metadata["edge_color_cycle"],
+        #     edge_width=metadata["edge_width"],
+        #     edge_width_is_relative=metadata["edge_width_is_relative"],
+        #     size=metadata["size"],
+        # )
+        
     def _on_yield(self, results):
-        # TODO : display the results in the viewer
-        # Testing version where an int i is yielded
         self._display_results(results)
-        ############################
         self.log.print_and_log(f"Yielded {results}")
-        # self._update_progress_bar(results, 10)
-        ############################
+        # self._update_progress_bar(results, 10) # FIXME : add progress bar update
+
 
     def _on_start(self):
-        """Catches start signal from worker to call :py:func:`~display_status_report`."""
+        """Catches start signal from worker to call :py:func:`~display_status_report`.
+        Also needs to setup the results layer.
+        """
+        self.result_layer = self._add_results_layer(self._keypoint_layer)
+        
         self._display_status_report()
         self.log.print_and_log(f"Worker started at {get_time()}")
         self.log.print_and_log("Worker is running...")
@@ -310,10 +344,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
 
 ### -------- Tracking worker -------- ###
 
-
-
-
-class LogSignal(WorkerBaseSignals):
+class LogSignal(WorkerBaseSignals): # DO NOT CHANGE
     """Signal to send messages to be logged from another thread.
 
     Separate from Worker instances as indicated `on this post`_
