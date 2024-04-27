@@ -226,7 +226,6 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             ### Data ###
             video=frames,
             keypoints=keypoint_cord,
-            result_layer=self.keypoint_layer_dropdown.layer(),
             ### Metadata ###
             root=metadata["root"],
             paths=metadata["paths"],
@@ -268,14 +267,22 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             metadata=metadata,
             properties=properties,
             ### Display properties ###
-            face_color=metadata["face_color"],
-            face_color_cycle=metadata["face_color_cycle"],
-            face_colormap=metadata["face_colormap"],
-            edge_color=metadata["edge_color"],
-            edge_color_cycle=metadata["edge_color_cycle"],
-            edge_width=metadata["edge_width"],
-            edge_width_is_relative=metadata["edge_width_is_relative"],
-            size=metadata["size"],
+            face_color=keypoint_layer.face_color,
+            face_color_cycle=keypoint_layer.face_color_cycle,
+            face_colormap=keypoint_layer.face_colormap,
+            edge_color=keypoint_layer.edge_color,
+            edge_color_cycle=keypoint_layer.edge_color_cycle,
+            edge_width=keypoint_layer.edge_width,
+            edge_width_is_relative=keypoint_layer.edge_width_is_relative,
+            size=keypoint_layer.size,
+            # face_color=metadata["face_color"],
+            # face_color_cycle=metadata["face_color_cycle"],
+            # face_colormap=metadata["face_colormap"],
+            # edge_color=metadata["edge_color"],
+            # edge_color_cycle=metadata["edge_color_cycle"],
+            # edge_width=metadata["edge_width"],
+            # edge_width_is_relative=metadata["edge_width_is_relative"],
+            # size=metadata["size"],
         )
 
     def _display_results(self, results):
