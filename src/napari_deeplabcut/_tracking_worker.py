@@ -409,13 +409,16 @@ def cotrack_online(
     log,
     video,
     keypoints,
-    device: str = "cpu",
+    device: str = "auto",
 ) -> np.ndarray:
     log("Running CoTracker")
     with open("log_cotrack.txt", "w") as f:
         f.write(f"video={video.shape}\n")
         f.write(f"keypoints={keypoints.shape}\n")
         f.write(f"{keypoints}\n")
+
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _process_step(window_frames, is_first_step, queries):
         with open("log_window_frames.txt", "w") as f:
