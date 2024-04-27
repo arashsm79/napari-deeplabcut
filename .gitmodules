@@ -1,3 +1,0 @@
-[submodule "src/co-tracker"]
-	path = src/co-tracker
-	url = https://github.com/facebookresearch/co-tracker
