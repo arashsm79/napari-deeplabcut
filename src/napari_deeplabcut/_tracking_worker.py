@@ -35,18 +35,18 @@ from napari_deeplabcut._tracking_utils import (
 class TrackingConfig:
     method : str = "CoTracker" # change when adding PIPS++
     ### Data ###
-    video: np.ndarray = None
-    keypoints: np.ndarray = None
-    result_layer: napari.layers.Points = None
+    video: np.ndarray
+    keypoints: np.ndarray 
+    result_layer: napari.layers.Points 
     ### Metadata ###
-    root: str = None # path to the video
-    paths: list = None # list of paths to the video frames
-    bodyparts: list = None # list of bodyparts
-    individuals_ids: list = None # list of individuals
+    root: str  # path to the video
+    paths: list # list of paths to the video frames
+    bodyparts: list # list of bodyparts
+    individuals_ids: list # list of individuals
     ### Config from data ###
-    n_frames: int = None
-    n_animals: int = None
-    n_keypoints: int = None
+    n_frames: int
+    n_animals: int
+    n_keypoints: int
     ### User config ###
     device: str = "cpu"
     
