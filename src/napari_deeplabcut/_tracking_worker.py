@@ -333,7 +333,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         """Catches start signal from worker to call :py:func:`~display_status_report`.
         Also needs to setup the results layer.
         """
-        self.result_layer = self._add_results_layer(self._keypoint_layer)
+        # self.result_layer = self._add_results_layer(self._keypoint_layer) # FIXME : fix with proper display
         
         self._display_status_report()
         self.log.print_and_log(f"Worker started at {get_time()}")
