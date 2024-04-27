@@ -57,6 +57,19 @@ class TrackingResults: # Add anything relevant to be yielded by the worker here
     """Used to update the results and progress bar. Is yielded by the worker."""
     result_keypoints: np.ndarray = None
     layer_metadata: dict = None
+    hdf_path : str = None
+
+def reshape_keypoints_all_frames(keypoints, n_frames, n_animals, n_bodyparts):
+    """Reshapes all frames of keypoints from napari's (N,D) format to (n_frames, n_animals, n_bodyparts, 2) format."""
+    reshaped_keypoints = np.zeros((n_frames, n_animals, n_bodyparts, 2))
+    
+    for i in range(n_frames):
+        k = keypoints[keypoints[:, 0] == i][:, 1:]
+        reshaped_k = k.reshape((n_animals, n_bodyparts, 2))
+        reshaped_k = reshaped_k[..., [1, 0]]  # swap x and y coordinates
+        reshaped_keypoints[i] = reshaped_k
+
+    return reshaped_keypoints
 
 ### -------- Tracking Widget -------- ###
 
@@ -68,6 +81,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         super().__init__(parent=parent)
     
         self._viewer : napari.viewer.Viewer = napari_viewer
+        self.worker_config : TrackingConfig = None
         self._worker : TrackingWorker = None
         
         self._keypoint_layer : napari.layers.Points = None
@@ -221,7 +235,7 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         properties = self._keypoint_layer.properties
         keypoint_cord = self._keypoint_layer.data
         frames = self.video_layer.data
-        
+
         config = TrackingConfig(
             ### Data ###
             video=frames,
@@ -242,7 +256,11 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         )
         
         self._worker = TrackingWorker(config)
+        self.worker_config = config
+        
+        self._connect_worker_signals()
 
+    def _connect_worker_signals(self):
         # Connect the worker to the logging system
         self._worker.log_signal.connect(self.log.print_and_log)
         self._worker.log_w_replace_signal.connect(self.log.replace_last_line)
@@ -253,10 +271,10 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
         self._worker.yielded.connect(partial(self._on_yield))
         self._worker.errored.connect(partial(self._on_error))
         self._worker.finished.connect(self._on_finish)
-
     
     def _add_results_layer(self, keypoint_layer):
         """Create a Points layer with all the metadata taken from the keypoint layer."""
+        # NOTE : this is not really fully functional, we would need to repeat the colors attributes for each frame
         metadata = keypoint_layer.metadata
         properties = keypoint_layer.properties
         keypoint_cord = keypoint_layer.data
@@ -275,44 +293,35 @@ class TrackingModule(QWidget, metaclass=QWidgetSingleton):
             edge_width=keypoint_layer.edge_width,
             edge_width_is_relative=keypoint_layer.edge_width_is_relative,
             size=keypoint_layer.size,
-            # face_color=metadata["face_color"],
-            # face_color_cycle=metadata["face_color_cycle"],
-            # face_colormap=metadata["face_colormap"],
-            # edge_color=metadata["edge_color"],
-            # edge_color_cycle=metadata["edge_color_cycle"],
-            # edge_width=metadata["edge_width"],
-            # edge_width_is_relative=metadata["edge_width_is_relative"],
-            # size=metadata["size"],
         )
 
     def _display_results(self, results):
         """Display the results in the viewer, updating the results layer."""
-        self.result_layer.data = results.result_keypoints
+        # self.result_layer.data = results.result_keypoints
         
         ### Previous test implementation using a hdf file ###
-        # path_test = str(results)
-        # keypoint_data, metadata, _ = read_hdf(path_test)[0]
-        # # hdf data contains : keypoint data, metadata, and "points"
-        # # we want to create a points layer from the keypoint data
-        # # layer properties (dict) should be populated with metadata
-        # print(metadata)
-        # layer = self._viewer.add_points(
-        #     ### data ###
-        #     keypoint_data,
-        #     name="keypoints_hdf_test",
-        #     metadata=metadata["metadata"],
-        #     # features=metadata["properties"], # not needed AFAIK
-        #     properties=metadata["properties"],
-        #     ### Display properties ###
-        #     face_color=metadata["face_color"],
-        #     face_color_cycle=metadata["face_color_cycle"],
-        #     face_colormap=metadata["face_colormap"],
-        #     edge_color=metadata["edge_color"],
-        #     edge_color_cycle=metadata["edge_color_cycle"],
-        #     edge_width=metadata["edge_width"],
-        #     edge_width_is_relative=metadata["edge_width_is_relative"],
-        #     size=metadata["size"],
-        # )
+        path_test = str(results.hdf_path)
+        keypoint_data, metadata, _ = read_hdf(path_test)[0]
+        # hdf data contains : keypoint data, metadata, and "points"
+        # we want to create a points layer from the keypoint data
+        # layer properties (dict) should be populated with metadata
+        self.result_layer = self._viewer.add_points(
+            ### Data & metadata ###
+            keypoint_data,
+            name="Tracking results",
+            metadata=metadata["metadata"],
+            # features=metadata["properties"], # not needed AFAIK
+            properties=metadata["properties"],
+            ### Display properties ###
+            face_color=metadata["face_color"],
+            face_color_cycle=metadata["face_color_cycle"],
+            face_colormap=metadata["face_colormap"],
+            edge_color=metadata["edge_color"],
+            edge_color_cycle=metadata["edge_color_cycle"],
+            edge_width=metadata["edge_width"],
+            edge_width_is_relative=metadata["edge_width_is_relative"],
+            size=metadata["size"],
+        )
         
     def _on_yield(self, results):
         self._display_results(results)
