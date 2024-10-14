@@ -551,6 +551,7 @@ class KeypointControls(QWidget):
         self._is_saved = False
 
         self.viewer = napari_viewer
+        self.viewer.window.add_plugin_dock_widget("napari-deeplabcut", "Tracking controls", tabify = False)
         self.viewer.layers.events.inserted.connect(self.on_insert)
         self.viewer.layers.events.removed.connect(self.on_remove)
 
