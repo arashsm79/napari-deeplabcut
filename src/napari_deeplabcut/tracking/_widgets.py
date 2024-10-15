@@ -1,22 +1,29 @@
 from magicgui import magic_factory
+import debugpy
+from functools import partial
 from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, Slider, SpinBox
 from napari.types import PointsData, ImageData
 from napari.layers import Points, Image
-from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget, QProgressBar
 from qtpy.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QSlider, QLabel, QComboBox, QSizePolicy, QGridLayout
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, Slot
 from skimage.util import img_as_float
+from napari_deeplabcut.tracking.tracking_worker import TrackingWorker, TrackingWorkerData
 import napari
+from napari.viewer import Viewer
+from napari.utils.events.event import Event
 
 
 class TrackingControls(QWidget):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
-        self._viewer = viewer
+        self._viewer: Viewer = viewer
 
+        # Layout
         self._tracking_method_combo = QComboBox()
-        self._keypoint_layer_combo: QComboBox = create_widget(annotation=PointsData)
-        self._video_layer_combo: QComboBox = create_widget(annotation=ImageData)
+        self._keypoint_layer_combo: ComboBox = create_widget(annotation=Points)
+        self._video_layer_combo: ComboBox = create_widget(annotation=Image)
+        self._video_layer_combo.changed.connect(self._video_layer_changed)
         self._backward_slider = QSlider(Qt.Horizontal)
         self._backward_spinbox_absolute = QSpinBox()
         self._backward_spinbox_relative = QSpinBox()
@@ -27,19 +34,69 @@ class TrackingControls(QWidget):
         self._forward_spinbox_relative = QSpinBox()
         self._tracking_stop_button = QPushButton()
         self._tracking_forward_button = QPushButton()
+        self._tracking_forward_button.clicked.connect(self.track_forward)
         self._tracking_backward_button = QPushButton()
         self._tracking_bothway_button = QPushButton()
+        self._tracking_progress_bar = QProgressBar()
+
+        # Controls
+        self._forward_slider.valueChanged.connect(self._forward_spinbox_relative.setValue)
+        self._forward_spinbox_relative.valueChanged.connect(lambda x : (self._forward_slider.setValue(x), self._forward_spinbox_absolute.setValue(self._reference_spinbox.value() + x)))
+        self._forward_spinbox_absolute.valueChanged.connect(lambda x : self._forward_spinbox_relative.setValue(x - self._reference_spinbox.value() if x - self._reference_spinbox.value() > 0 else 0))
+
+        self._viewer.dims.events.current_step.connect(lambda e: self._reference_spinbox.setValue(e.value[0]))
+        self._reference_spinbox.valueChanged.connect(self._update_controls)
+
+        # Worker
+        self.is_tracking = False
+        self.worker: TrackingWorker = TrackingWorker()
+        self.worker.started.connect(self.tracking_started)
+        self.worker.progress.connect(self._tracking_progress_bar.setValue)
+        self.worker.finished.connect(self.tracking_finished)
 
         self._build_layout()
 
+    @Slot(int)
+    def _update_controls(self, new_val: int):
+        if self.video_layer is None:
+            return
+        self._forward_slider.setRange(0, self.video_layer.data.shape[0] - 1 - new_val)
+        self._forward_spinbox_relative.setRange(0, self.video_layer.data.shape[0] - 1 - new_val)
+        self._forward_spinbox_absolute.setRange(new_val, self.video_layer.data.shape[0] - 1)
+        self._forward_spinbox_absolute.setValue(new_val+self._forward_spinbox_relative.value())
+
+        self._viewer.dims.current_step = (new_val, *self._viewer.dims.current_step[1:])
+        
+
     @property
     def keypoint_layer(self) -> Points:
-        return self._viewer.layers[self._keypoint_layer_combo.currentText()]
+        return self._keypoint_layer_combo.value
 
     @property
-    def video_layer(self) -> Image:
-        return self._viewer.layers[self._video_layer_combo.currentText()]
+    def video_layer(self) -> Image | None:
+        return self._video_layer_combo.value
 
+    @Slot()
+    def _video_layer_changed(self):
+        self._update_controls(0)
+
+    @Slot()
+    def tracking_started(self):
+        self.is_tracking = True
+        self._tracking_progress_bar.setValue(0)
+
+    @Slot()
+    def tracking_finished(self):
+        self.is_tracking = False
+        self._tracking_progress_bar.setValue(100)
+
+    @Slot()
+    def track_forward(self):
+        if self.is_tracking:
+            return
+
+        tracking_data = TrackingWorkerData()
+        
 
     def _build_layout(self):
         self.setLayout(QVBoxLayout())
@@ -131,4 +188,7 @@ class TrackingControls(QWidget):
         self._tracking_backward_button.setText("⇤")
         tracking_controls_layout.addWidget(self._tracking_backward_button, 0, 1)
         tracking_controls_layout.addWidget(self._tracking_bothway_button, 1, 2)
+
+        self._tracking_progress_bar.setRange(0, 100)
         self.layout().addLayout(tracking_controls_layout)
+        self.layout().addWidget(self._tracking_progress_bar)
