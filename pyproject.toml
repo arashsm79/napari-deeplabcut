@@ -23,6 +23,7 @@ dependencies = [
     "tables>=3.9.2",
     "torch >= 2.4.1",
     "tox>=4.20.0",
+    "imageio[ffmpeg]>=2.35.1",
 ]
 
 [tool.uv]
