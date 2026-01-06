@@ -1,3 +1,5 @@
+import enum
+
 from magicgui import magic_factory
 import pandas as pd
 import numpy as np
@@ -13,8 +15,17 @@ import napari
 from napari.viewer import Viewer
 from napari.utils.events.event import Event
 
-from napari_deeplabcut.tracking._worker import TrackingWorker, TrackingWorkerData
+from napari_deeplabcut.tracking._worker import TrackingWorker, TrackingWorkerData, TrackerType
 from napari_deeplabcut.keypoints import KeypointStore
+
+# Keybinds
+class KeybindConfig(enum.Enum):
+    TRACK_FORWARD = "l"
+    TRACK_FORWARD_END = "k"
+    TRACK_BACKWARD = "h"
+    TRACK_BACKWARD_END = "j"
+    MOVE_FORWARD_FRAME = "i"
+    MOVE_BACKWARD_FRAME = "u"
 
 
 class TrackingControls(QWidget):
@@ -76,30 +87,41 @@ class TrackingControls(QWidget):
 
         self._build_layout()
 
+    def _set_tooltips(self):
+        self._tracking_forward_button.setToolTip(f"Track forward ({KeybindConfig.TRACK_FORWARD.value})")
+        self._tracking_forward_end_button.setToolTip(f"Track forward to end ({KeybindConfig.TRACK_FORWARD_END.value})")
+        self._tracking_backward_button.setToolTip(f"Track backward ({KeybindConfig.TRACK_BACKWARD.value})")
+        self._tracking_backward_end_button.setToolTip(f"Track backward to start ({KeybindConfig.TRACK_BACKWARD_END.value})")
+        self._tracking_bothway_button.setToolTip(f"Track both ways")
+        self._set_ref_button.setToolTip(f"Set reference frame")
+    
     def _setup_keybindings(self, viewer: "napari.viewer.Viewer"):
-        @Points.bind_key("l")
+        
+        @Points.bind_key(KeybindConfig.TRACK_FORWARD.value)
         def track_forward(event):
             self.track_forward()
 
-        @Points.bind_key("k")
+        @Points.bind_key(KeybindConfig.TRACK_FORWARD_END.value)
         def track_forward_end(event):
             self.track_forward_end()
 
-        @Points.bind_key("h")
+        @Points.bind_key(KeybindConfig.TRACK_BACKWARD.value)
         def track_backward(event):
             self.track_backward()
 
-        @Points.bind_key("j")
+        @Points.bind_key(KeybindConfig.TRACK_BACKWARD_END.value)
         def track_backward_end(event):
             self.track_backward_end()
 
-        @Points.bind_key("i")
+        @Points.bind_key(KeybindConfig.MOVE_FORWARD_FRAME.value)
         def move_forward_frame(event):
             viewer.dims.current_step = (viewer.dims.current_step[0] + 1, *viewer.dims.current_step[1:])
 
-        @Points.bind_key("u")
+        @Points.bind_key(KeybindConfig.MOVE_BACKWARD_FRAME.value)
         def move_backward_frame(event):
             viewer.dims.current_step = (viewer.dims.current_step[0] - 1, *viewer.dims.current_step[1:])
+        
+        self._set_tooltips()
 
     @Slot(int)
     def _update_controls(self, new_val: int):
@@ -264,7 +286,7 @@ class TrackingControls(QWidget):
         keypoints[:, 0] = 0
         keypoint_features = self.keypoint_layer.features[self.keypoint_layer.data[:, 0] == ref_frame_idx]
         tracking_data = TrackingWorkerData(
-            tracker=self._tracking_method_combo.currentText(),
+            tracker=TrackerType.get_from_name(self._tracking_method_combo.currentText()),
             video=video_slice,
             keypoints=keypoints,
             keypoint_features=keypoint_features,
@@ -276,8 +298,10 @@ class TrackingControls(QWidget):
 
     def _build_layout(self):
         self.setLayout(QVBoxLayout())
-        self._tracking_method_combo.addItems(["Cotracker", "PIP"])
-        self._tracking_method_combo.setCurrentText("Cotracker")
+        # self._tracking_method_combo.addItems(["Cotracker", "PIP"])
+        self._tracking_method_combo.addItems(TrackerType.get_all_names())
+        # self._tracking_method_combo.setCurrentText("Cotracker")
+        self._tracking_method_combo.setCurrentIndex(0)
         _tracking_method_layout = QHBoxLayout()
         _tracking_method_layout.addWidget(QLabel("Tracker"))
         _tracking_method_layout.addWidget(self._tracking_method_combo)

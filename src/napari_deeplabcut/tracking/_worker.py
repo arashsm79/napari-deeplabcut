@@ -1,17 +1,60 @@
 import sys
-import pandas as pd
-import logging
 import time
+import logging
+import enum
+
+import pandas as pd
 from qtpy.QtCore import QObject, QThread, Signal, Slot, QCoreApplication
 from qtpy.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget
 import numpy as np
 
 from dataclasses import dataclass
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+import debugpy
+
+@dataclass
+class TorchHubModel:
+    org: str
+    model: str
+
+@dataclass(frozen=True)
+class TrackerInfo:
+    name: str
+    torchhub: TorchHubModel
+    
+    def load_model(self, device: str):
+        import torch
+        model = torch.hub.load(
+            self.torchhub.org,
+            self.torchhub.model,
+        ).to(device)
+        return model
+
+class TrackerType(enum.Enum):
+    COTRACKER = TrackerInfo(
+            name="Cotracker 3", 
+            torchhub=TorchHubModel(
+                org="facebookresearch/co-tracker", 
+                model="cotracker3_online"
+                )
+        )
+    
+    def get_all_names() -> list[str]:
+        """Get a list of all implemented tracker names."""
+        return [tracker.value.name for tracker in TrackerType]
+    
+    def get_from_name(name: str) -> 'TrackerType | None':
+        """Get the TrackerType enum member from its name."""
+        for tracker in TrackerType:
+            if tracker.value.name == name:
+                return tracker
+        return None
 
 @dataclass
 class TrackingWorkerData:
-    tracker: str
+    tracker: TrackerType
     video: np.ndarray
     keypoints: np.ndarray # (num_keypoint, 3) first col is frame numbe in `video` and the second and third are x, y
     keypoint_features: dict
@@ -31,22 +74,30 @@ class TrackingWorker(QObject):
         super().__init__()
         import torch
         self.is_stopped = False
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu" # TODO implement MPS support
         self.model: object | None = None
 
     @Slot(TrackingWorkerData)
     def track(self, cfg: TrackingWorkerData):
+        debugpy.debug_this_thread()
         # TODO: if cfg.tracker == 'cotracker'
         import torch
         if self.model is None:
-            self.model = torch.hub.load("facebookresearch/co-tracker", "cotracker3_online").to(self.device)
+            self.model = cfg.tracker.value.load_model(self.device)
+            self.model.eval()
+            
         def _process_step(window_frames, is_first_step, queries):
+            # NOTE ideally each model should have its own processing function implemented separately and return the same format
             video_chunk = (
                 torch.tensor(np.stack(window_frames[-self.model.step * 2:]), device=self.device)
                 .float()
                 .permute(0, 3, 1, 2)[None]
             )  # (1, T, 3, H, W)
-            return self.model(video_chunk, is_first_step=is_first_step, queries=queries[None], add_support_grid=True)
+            logger.debug(f"Video chunk shape: {video_chunk.shape}, Queries shape: {queries.shape}")
+            result = self.model(video_chunk, is_first_step=is_first_step, queries=queries[None], add_support_grid=True)
+            if result is None:
+                raise RuntimeError("Tracking model returned None")
+            return result
         # video is originally of shape (num_frames, height, width, channels)
         video = np.array(cfg.video)
         window_frames = []
@@ -69,11 +120,15 @@ class TrackingWorker(QObject):
 
         # Processing final frames in case video length is not a multiple of model.step
         # TODO: Use visibility
+        logger.debug(f"Window frames shape before final processing: {np.array(window_frames).shape}")
         pred_tracks, _pred_visibility = _process_step(
             window_frames[-(i % self.model.step) - self.model.step - 1:],
             is_first_step,
             queries=queries,
         )
+        debugpy.breakpoint()
+        logger.debug(f"Predicted tracks : {pred_tracks}")
+        logger.debug(f"Predicted visibility: {_pred_visibility}")
         self.progress.emit((len(video), len(video)))
 
         tracks = pred_tracks.squeeze().cpu().numpy()
@@ -87,6 +142,8 @@ class TrackingWorker(QObject):
         cfg.keypoints = tracks
         cfg.keypoints[:, [1, 2]] = cfg.keypoints[:, [2, 1]]
         self.trackingFinished.emit(cfg)
+        
+        # self.model = None  # free up memory ?
 
     def run(self):
         self.started.emit()
