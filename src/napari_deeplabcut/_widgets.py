@@ -389,6 +389,7 @@ class KeypointMatplotlibCanvas(QWidget):
         self.slider.setMinimum(50)
         self.slider.setMaximum(10000)
         self.slider.setValue(50)
+        self.slider.setToolTip("Adjust the range of frames to show on the plot")
         self.slider.setTickPosition(QSlider.TicksBelow)
         self.slider.setTickInterval(50)
         self.slider_value = QLabel(str(self.slider.value()))
@@ -421,6 +422,7 @@ class KeypointMatplotlibCanvas(QWidget):
         )
 
         self.viewer.layers.events.inserted.connect(self._load_dataframe)
+        self.viewer.dims.events.range.connect(self.update_slider_max)
         self._lines = {}
 
     def on_doubleclick(self, event):
@@ -440,7 +442,10 @@ class KeypointMatplotlibCanvas(QWidget):
         bool
             True if theme's background colour has hsl lighter than 50%, False if darker.
         """
-        theme = napari.utils.theme.get_theme(self.viewer.theme, as_dict=False)
+        theme = napari.utils.theme.get_theme(
+                self.viewer.theme, 
+                # as_dict=False # deprecated in napari > 0.6.6
+            )
         _, _, bg_lightness = theme.background.as_hsl_tuple()
         return bg_lightness > 0.5
 
@@ -543,6 +548,17 @@ class KeypointMatplotlibCanvas(QWidget):
             return
 
         self._refresh_canvas(value)
+        
+    def update_slider_max(self, event):
+        """Update the slider's maximum value based on the number of frames in the data."""
+        for layer in self.viewer.layers:
+            if isinstance(layer, Image) and len(layer.data.shape) >= 3:
+                n_frames = layer.data.shape[0]
+                # if less than 50 frames, set max to min to avoid slider issues
+                if n_frames < self.slider.minimum():
+                    self.slider.setMaximum(self.slider.minimum())
+                self.slider.setMaximum(n_frames - 1)
+                break
 
 
 class KeypointControls(QWidget):
@@ -551,7 +567,8 @@ class KeypointControls(QWidget):
         self._is_saved = False
 
         self.viewer = napari_viewer
-        self.viewer.window.add_plugin_dock_widget("napari-deeplabcut", "Tracking controls", tabify = False)
+        # This is now a standalone menu and should not be loaded with this plugin
+        # self.viewer.window.add_plugin_dock_widget("napari-deeplabcut", "Tracking controls", tabify = False)
         self.viewer.layers.events.inserted.connect(self.on_insert)
         self.viewer.layers.events.removed.connect(self.on_remove)
 
@@ -572,7 +589,7 @@ class KeypointControls(QWidget):
         w = QtWelcomeWidget(None)
         overlay._overlay = w
         overlay.addWidget(w)
-        overlay._overlay.sig_dropped.connect(overlay.sig_dropped)
+        # overlay._overlay.sig_dropped.connect(overlay.sig_dropped)
 
         self._color_mode = keypoints.ColorMode.default()
         self._label_mode = keypoints.LabelMode.default()
@@ -673,10 +690,12 @@ class KeypointControls(QWidget):
         self.viewer.window.help_menu.addAction(display_shortcuts_action)
 
         # Hide some unused viewer buttons
-        self.viewer.window._qt_viewer.viewerButtons.gridViewButton.hide()
+        # TODO do we truly want to disable these ? Tracking util may need to create new points layers
+        # TODO fix direct access to qt_viewer private members
+        # self.viewer.window._qt_viewer.viewerButtons.gridViewButton.hide()
         self.viewer.window._qt_viewer.viewerButtons.rollDimsButton.hide()
         self.viewer.window._qt_viewer.viewerButtons.transposeDimsButton.hide()
-        self.viewer.window._qt_viewer.layerButtons.newPointsButton.setDisabled(True)
+        # self.viewer.window._qt_viewer.layerButtons.newPointsButton.setDisabled(True)
         self.viewer.window._qt_viewer.layerButtons.newLabelsButton.setDisabled(True)
 
         if self.settings.value("first_launch", True) and not os.environ.get(
