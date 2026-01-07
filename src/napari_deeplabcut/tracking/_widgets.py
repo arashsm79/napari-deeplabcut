@@ -97,47 +97,49 @@ class TrackingControls(QWidget):
     
     def _setup_keybindings(self, viewer: "napari.viewer.Viewer"):
         
-        @Points.bind_key(KeybindConfig.TRACK_FORWARD.value)
+        @Points.bind_key(KeybindConfig.TRACK_FORWARD.value, overwrite=True)
         def track_forward(event):
             self.track_forward()
 
-        @Points.bind_key(KeybindConfig.TRACK_FORWARD_END.value)
+        @Points.bind_key(KeybindConfig.TRACK_FORWARD_END.value, overwrite=True)
         def track_forward_end(event):
             self.track_forward_end()
 
-        @Points.bind_key(KeybindConfig.TRACK_BACKWARD.value)
+        @Points.bind_key(KeybindConfig.TRACK_BACKWARD.value, overwrite=True)
         def track_backward(event):
             self.track_backward()
 
-        @Points.bind_key(KeybindConfig.TRACK_BACKWARD_END.value)
+        @Points.bind_key(KeybindConfig.TRACK_BACKWARD_END.value, overwrite=True)
         def track_backward_end(event):
             self.track_backward_end()
 
-        @Points.bind_key(KeybindConfig.MOVE_FORWARD_FRAME.value)
+        @Points.bind_key(KeybindConfig.MOVE_FORWARD_FRAME.value, overwrite=True)
         def move_forward_frame(event):
             viewer.dims.current_step = (viewer.dims.current_step[0] + 1, *viewer.dims.current_step[1:])
 
-        @Points.bind_key(KeybindConfig.MOVE_BACKWARD_FRAME.value)
+        @Points.bind_key(KeybindConfig.MOVE_BACKWARD_FRAME.value, overwrite=True)
         def move_backward_frame(event):
             viewer.dims.current_step = (viewer.dims.current_step[0] - 1, *viewer.dims.current_step[1:])
         
         self._set_tooltips()
 
     @Slot(int)
-    def _update_controls(self, new_val: int):
+    def _update_controls(self, current_frame: int):
         if self.video_layer is None:
             return
-        self._forward_slider.setRange(0, self.video_layer.data.shape[0] - 1 - new_val)
-        self._forward_spinbox_relative.setRange(0, self.video_layer.data.shape[0] - 1 - new_val)
-        self._forward_spinbox_absolute.setRange(new_val, self.video_layer.data.shape[0] - 1)
-        self._forward_spinbox_absolute.setValue(new_val+self._forward_spinbox_relative.value())
+        
+        max_frames = self.video_layer.data.shape[0] - 1
+        self._forward_slider.setRange(0, max_frames - current_frame)
+        self._forward_spinbox_relative.setRange(0, max_frames - current_frame)
+        self._forward_spinbox_absolute.setRange(current_frame, max_frames)
+        self._forward_spinbox_absolute.setValue(current_frame+self._forward_spinbox_relative.value())
 
-        self._backward_slider.setRange(-new_val, 0)
-        self._backward_spinbox_relative.setRange(-new_val, 0)
-        self._backward_spinbox_absolute.setRange(0, new_val)
-        self._backward_spinbox_absolute.setValue(new_val+self._backward_spinbox_relative.value())
+        self._backward_slider.setRange(-current_frame, 0)
+        self._backward_spinbox_relative.setRange(-current_frame, 0)
+        self._backward_spinbox_absolute.setRange(0, current_frame)
+        self._backward_spinbox_absolute.setValue(current_frame+self._backward_spinbox_relative.value())
 
-        self._viewer.dims.current_step = (new_val, *self._viewer.dims.current_step[1:])
+        self._viewer.dims.current_step = (current_frame, *self._viewer.dims.current_step[1:])
 
     def _start_worker(self):
         self.is_tracking = False
@@ -294,7 +296,7 @@ class TrackingControls(QWidget):
             backward_tracking=backward_tracking
         )
         self.trackingRequested.emit(tracking_data)
-        
+
 
     def _build_layout(self):
         self.setLayout(QVBoxLayout())
