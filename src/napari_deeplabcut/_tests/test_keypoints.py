@@ -1,4 +1,5 @@
 import numpy as np
+
 from napari_deeplabcut import keypoints
 
 
@@ -10,9 +11,7 @@ def test_store_advance_step(store):
 
 def test_store_labels(store, fake_keypoints):
     assert store.n_steps == fake_keypoints.shape[0]
-    assert store.labels == list(
-        fake_keypoints.columns.get_level_values("bodyparts").unique()
-    )
+    assert store.labels == list(fake_keypoints.columns.get_level_values("bodyparts").unique())
 
 
 def test_store_find_first_unlabeled_frame(store, fake_keypoints):
@@ -52,7 +51,7 @@ def test_point_resize(viewer, points):
 
 
 def test_add_unnanotated(store):
-    store.layer.metadata["controls"].label_mode = "loop"
+    store.layer.metadata["controls"].label_mode = "Loop"
     ind_to_remove = 0
     data = store.layer.data
     store.layer.data = data[data[:, 0] != ind_to_remove]
@@ -65,7 +64,7 @@ def test_add_unnanotated(store):
 
 
 def test_add_quick(store):
-    store.layer.metadata["controls"].label_mode = "quick"
+    store.layer.metadata["controls"].label_mode = "Quick"
     store.current_keypoint = store._keypoints[0]
     coord = store.current_step, -1, -1
     keypoints._add(store, coord=coord)

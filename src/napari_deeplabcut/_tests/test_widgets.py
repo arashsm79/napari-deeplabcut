@@ -1,7 +1,9 @@
-import numpy as np
 import os
-from napari_deeplabcut import _widgets
+
+import numpy as np
 from vispy import keys
+
+from napari_deeplabcut import _widgets
 
 
 def test_guess_continuous():
@@ -11,10 +13,10 @@ def test_guess_continuous():
 
 def test_keypoint_controls(viewer):
     controls = _widgets.KeypointControls(viewer)
-    controls.label_mode = "loop"
-    assert controls._radio_group.checkedButton().text() == "loop"
+    controls.label_mode = "Loop"
+    assert controls._radio_group.checkedButton().text() == "Loop"
     controls.cycle_through_label_modes()
-    assert controls._radio_group.checkedButton().text() == "sequential"
+    assert controls._radio_group.checkedButton().text() == "Sequential"
 
 
 def test_save_layers(viewer, points):
@@ -83,9 +85,9 @@ def test_keypoints_dropdown_menu(store):
     assert "id" in widget.menus
     assert "label" in widget.menus
     label_menu = widget.menus["label"]
-    label_menu.currentText() == "kpt_0"
+    assert label_menu.currentText() == "kpt_0"
     widget.update_menus(event=None)
-    label_menu.currentText() == "kpt_2"
+    assert label_menu.currentText() == "kpt_2"
     widget.refresh_label_menu("id_0")
     assert label_menu.count() == 0
 

@@ -16,7 +16,7 @@ repos:
       - id: ruff-format
       # Run the linter.
       - id: ruff-check
-        args: [--fix]
+        args: [--fix,--unsafe-fixes]
   - repo: https://github.com/tlambert03/napari-plugin-checks
     rev: v0.3.0
     hooks:

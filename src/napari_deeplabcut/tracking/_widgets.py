@@ -1,24 +1,37 @@
 import enum
+import logging
 from functools import partial
-from logging import getLogger
 
-from magicgui import magic_factory
-import pandas as pd
-import numpy as np
-from functools import partial
-from magicgui.widgets import CheckBox, Container, create_widget, ComboBox, Slider, SpinBox
-from napari.types import PointsData, ImageData
-from napari.layers import Points, Image
-from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget, QProgressBar
-from qtpy.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QSlider, QLabel, QComboBox, QSizePolicy, QGridLayout
-from qtpy.QtCore import Qt, Slot, Signal
-from skimage.util import img_as_float
 import napari
+import numpy as np
+import pandas as pd
+from magicgui.widgets import ComboBox, create_widget
+from napari.layers import Image, Points
 from napari.viewer import Viewer
-from napari.utils.events.event import Event
+from qtpy.QtCore import Qt, Signal, Slot
+from qtpy.QtGui import QIcon
+from qtpy.QtWidgets import (
+    QComboBox,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from napari_deeplabcut.tracking._worker import TrackingWorker, TrackingWorkerData, TrackerType
 from napari_deeplabcut.keypoints import KeypointStore
+from napari_deeplabcut.tracking._worker import (
+    TrackerInfo,
+    TrackerType,
+    TrackingWorker,
+    TrackingWorkerData,
+)
+
 
 # Keybinds
 class KeybindConfig(enum.Enum):
@@ -29,26 +42,35 @@ class KeybindConfig(enum.Enum):
     MOVE_FORWARD_FRAME = "i"
     MOVE_BACKWARD_FRAME = "u"
 
-logger = getLogger(__name__)
-logger.setLevel("DEBUG")
+
+logger = logging.getLogger(__name__)
+
 
 class TrackingControls(QWidget):
     trackingRequested = Signal(TrackingWorkerData)
     trackedKeypointsAdded = Signal()
+
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         from napari_deeplabcut._widgets import KeypointControls
+
         self._viewer: Viewer = viewer
 
         # Layout
         ## Data and model selection
         self._tracking_method_combo = QComboBox()
+        self._model_info_button = QToolButton()
+        self._model_info_button.setIcon(QIcon.fromTheme("help-about"))
+        self._model_info_button.setIconSize(self._model_info_button.iconSize() * 1.2)
         self._keypoint_layer_combo: ComboBox = create_widget(annotation=Points)
         self._video_layer_combo: ComboBox = create_widget(annotation=Image)
         self._video_layer_combo.changed.connect(self._video_layer_changed)
         ## Frame selection controls
         self._set_ref_button = QPushButton()
         self._reference_spinbox = QSpinBox()
+        self._reference_spinbox.setReadOnly(True)
+        self._reference_spinbox.setButtonSymbols(QSpinBox.NoButtons)
+        # self._reference_spinbox.setEnabled(False)
         self._updating_controls = False
         ### Backward
         self._backward_slider = QSlider(Qt.Horizontal)
@@ -74,9 +96,7 @@ class TrackingControls(QWidget):
 
         # Controls
         ## Forward controls
-        self._forward_slider.valueChanged.connect(
-            partial(self._forward_update, from_absolute=False, from_slider=True)
-        )
+        self._forward_slider.valueChanged.connect(partial(self._forward_update, from_absolute=False, from_slider=True))
         self._forward_spinbox_relative.valueChanged.connect(
             partial(self._forward_update, from_absolute=False, from_slider=False)
         )
@@ -95,7 +115,7 @@ class TrackingControls(QWidget):
         )
 
         # when the range of viewer dims changes (e.g. on opening a new video), update the reference spinbox max
-        self._viewer.dims.events.range.connect(lambda e: self._reference_spinbox.setRange(0, e.value[0][1]-1))
+        self._viewer.dims.events.range.connect(lambda e: self._reference_spinbox.setRange(0, e.value[0][1] - 1))
         self._viewer.dims.events.current_step.connect(lambda e: self._reference_spinbox.setValue(e.value[0]))
         self._viewer.dims.events.current_step.connect(self._update_controls)
         self._reference_spinbox.valueChanged.connect(self._update_controls)
@@ -113,17 +133,26 @@ class TrackingControls(QWidget):
 
         self._build_layout()
 
+    def _set_model_info_tooltip(self, current_model_name: str = None):
+        """Retrieves the display info for the selected model and sets it as tooltip for the model info button."""
+        tracker_info = TrackerInfo.get_info_from_name(current_model_name)
+        if tracker_info is not None and tracker_info.info_text:
+            self._model_info_button.setToolTip(tracker_info.info_text)
+        else:
+            self._model_info_button.setToolTip("")
+
     def _set_tooltips(self):
         self._tracking_forward_button.setToolTip(f"Track forward ({KeybindConfig.TRACK_FORWARD.value})")
         self._tracking_forward_end_button.setToolTip(f"Track forward to end ({KeybindConfig.TRACK_FORWARD_END.value})")
         self._tracking_backward_button.setToolTip(f"Track backward ({KeybindConfig.TRACK_BACKWARD.value})")
-        self._tracking_backward_end_button.setToolTip(f"Track backward to start ({KeybindConfig.TRACK_BACKWARD_END.value})")
-        self._tracking_bothway_button.setToolTip(f"Track both ways")
-        self._tracking_stop_button.setToolTip(f"Stop tracking")
-        self._set_ref_button.setToolTip(f"Set reference frame")
-    
+        self._tracking_backward_end_button.setToolTip(
+            f"Track backward to start ({KeybindConfig.TRACK_BACKWARD_END.value})"
+        )
+        self._tracking_bothway_button.setToolTip("Track both ways")
+        self._tracking_stop_button.setToolTip("Stop tracking")
+        self._set_ref_button.setToolTip("Set reference frame")
+
     def _setup_keybindings(self, viewer: "napari.viewer.Viewer"):
-        
         @Points.bind_key(KeybindConfig.TRACK_FORWARD.value, overwrite=True)
         def track_forward(event):
             self.track_forward()
@@ -142,18 +171,34 @@ class TrackingControls(QWidget):
 
         @Points.bind_key(KeybindConfig.MOVE_FORWARD_FRAME.value, overwrite=True)
         def move_forward_frame(event):
-            viewer.dims.current_step = (viewer.dims.current_step[0] + 1, *viewer.dims.current_step[1:])
+            viewer.dims.current_step = (
+                viewer.dims.current_step[0] + 1,
+                *viewer.dims.current_step[1:],
+            )
 
         @Points.bind_key(KeybindConfig.MOVE_BACKWARD_FRAME.value, overwrite=True)
         def move_backward_frame(event):
-            viewer.dims.current_step = (viewer.dims.current_step[0] - 1, *viewer.dims.current_step[1:])
-        
+            viewer.dims.current_step = (
+                viewer.dims.current_step[0] - 1,
+                *viewer.dims.current_step[1:],
+            )
+
         self._set_tooltips()
 
-    def _update_controls_from_widget(self, slider, relative_spinbox, absolute_spinbox, reference_spinbox, value, direction, from_absolute=False, from_slider=False):
+    def _update_controls_from_widget(
+        self,
+        slider,
+        relative_spinbox,
+        absolute_spinbox,
+        reference_spinbox,
+        value,
+        direction,
+        from_absolute=False,
+        from_slider=False,
+    ):
         """
         Generic function to update slider, relative spinbox, and absolute spinbox.
-    
+
         Parameters:
         - slider: The slider widget.
         - relative_spinbox: The relative spinbox widget.
@@ -190,7 +235,7 @@ class TrackingControls(QWidget):
 
     def _forward_update(self, value: int, from_absolute: bool, from_slider: bool):
         """Helper to update forward controls.
-        
+
         Parameters:
         - value: The new value to set.
         - from_absolute: Whether the update is triggered by the absolute spinbox.
@@ -204,17 +249,17 @@ class TrackingControls(QWidget):
             value=value,
             direction="forward",
             from_absolute=from_absolute,
-            from_slider=from_slider
+            from_slider=from_slider,
         )
-        
+
     def _backward_update(self, value: int, from_absolute: bool, from_slider: bool):
         """Helper to update backward controls.
-        
+
         Parameters:
         - value: The new value to set.
         - from_absolute: Whether the update is triggered by the absolute spinbox.
         - from_slider: Whether the update is triggered by the slider.
-            """
+        """
         self._update_controls_from_widget(
             slider=self._backward_slider,
             relative_spinbox=self._backward_spinbox_relative,
@@ -223,9 +268,9 @@ class TrackingControls(QWidget):
             value=value,
             direction="backward",
             from_absolute=from_absolute,
-            from_slider=from_slider
+            from_slider=from_slider,
         )
-        
+
     @Slot()
     def _update_controls(self):
         if self._updating_controls:
@@ -234,44 +279,54 @@ class TrackingControls(QWidget):
         try:
             if self.video_layer is None:
                 return
-            
+
             max_frames = self.video_layer.data.shape[0] - 1
             current_frame = max(0, min(self._viewer.dims.current_step[0], max_frames))
-            
+
             forward_delta = self._forward_spinbox_relative.value()
             self._forward_slider.setRange(0, max_frames - current_frame)
             self._forward_slider.setValue(forward_delta)
             self._forward_spinbox_relative.setRange(0, max_frames - current_frame)
             self._forward_spinbox_relative.setValue(forward_delta)
             self._forward_spinbox_absolute.setRange(current_frame, max_frames)
-            self._forward_spinbox_absolute.setValue(current_frame+forward_delta) # see _forward_update
+            self._forward_spinbox_absolute.setValue(current_frame + forward_delta)  # see _forward_update
             backward_delta = self._backward_spinbox_relative.value()
             self._backward_slider.setRange(-current_frame, 0)
             self._backward_slider.setValue(backward_delta)
             self._backward_spinbox_relative.setRange(-current_frame, 0)
             self._backward_spinbox_relative.setValue(backward_delta)
             self._backward_spinbox_absolute.setRange(0, current_frame)
-            self._backward_spinbox_absolute.setValue(current_frame+self._backward_spinbox_relative.value()) # see _backward_update
-            
+            self._backward_spinbox_absolute.setValue(
+                current_frame + self._backward_spinbox_relative.value()
+            )  # see _backward_update
+
             # self._viewer.dims.current_step = (current_frame, *self._viewer.dims.current_step[1:])
         finally:
             self._updating_controls = False
-            
+
     def _start_worker(self):
         self.is_tracking = False
         self.worker_started = False
         self.worker = TrackingWorker()
         self.worker.trackingStarted.connect(self.tracking_started)
-        self.worker.started.connect(partial(setattr, self, 'worker_started', True))
-        self.worker.finished.connect(partial(setattr, self, 'worker_started', False))
-        self.worker.progress.connect(lambda x: (self._tracking_progress_bar.setMaximum(x[1]), self._tracking_progress_bar.setValue(x[0])) if self._tracking_progress_bar.maximum() != x[1] else self._tracking_progress_bar.setValue(x[0]))
+        self.worker.started.connect(partial(setattr, self, "worker_started", True))
+        self.worker.finished.connect(partial(setattr, self, "worker_started", False))
+        self.worker.progress.connect(
+            lambda x: (
+                (
+                    self._tracking_progress_bar.setMaximum(x[1]),
+                    self._tracking_progress_bar.setValue(x[0]),
+                )
+                if self._tracking_progress_bar.maximum() != x[1]
+                else self._tracking_progress_bar.setValue(x[0])
+            )
+        )
         self.worker.trackingFinished.connect(self.tracking_finished)
         self.worker.trackingStopped.connect(self.tracking_stopped)
         self.trackingRequested.connect(self.worker.track)
         self._tracking_stop_button.clicked.connect(self.worker.stop_tracking)
 
         self.worker.start()
-        
 
     @property
     def keypoint_layer(self) -> Points | None:
@@ -287,7 +342,7 @@ class TrackingControls(QWidget):
 
     @Slot()
     def _video_layer_changed(self):
-        if self.viewer.dims.ndim != 3:
+        if self._viewer.dims.ndim != 3:
             return
         self._update_controls()
 
@@ -340,12 +395,13 @@ class TrackingControls(QWidget):
                 merged_keypoints.append(frame_old_keypoints)
                 merged_features.append(frame_old_features)
 
-        merged_keypoints = np.vstack(merged_keypoints) if merged_keypoints else np.empty((0, current_keypoints.shape[1]))
+        merged_keypoints = (
+            np.vstack(merged_keypoints) if merged_keypoints else np.empty((0, current_keypoints.shape[1]))
+        )
         merged_feature_df = pd.concat(merged_features, ignore_index=True)
 
         self.keypoint_layer.data = merged_keypoints
         self.keypoint_layer.features = merged_feature_df
-
 
     @Slot()
     def track_forward(self):
@@ -353,7 +409,11 @@ class TrackingControls(QWidget):
         forward_frame_idx: int = self._forward_spinbox_absolute.value()
         if forward_frame_idx <= ref_frame_idx:
             return
-        self.track((ref_frame_idx, forward_frame_idx+1), ref_frame_idx, backward_tracking=False)
+        self.track(
+            (ref_frame_idx, forward_frame_idx + 1),
+            ref_frame_idx,
+            backward_tracking=False,
+        )
 
     @Slot()
     def track_forward_end(self):
@@ -361,7 +421,11 @@ class TrackingControls(QWidget):
         forward_frame_idx: int = self.video_layer.data.shape[0] - 1
         if forward_frame_idx <= ref_frame_idx:
             return
-        self.track((ref_frame_idx, forward_frame_idx+1), ref_frame_idx, backward_tracking=False)
+        self.track(
+            (ref_frame_idx, forward_frame_idx + 1),
+            ref_frame_idx,
+            backward_tracking=False,
+        )
 
     @Slot()
     def track_backward(self):
@@ -370,7 +434,11 @@ class TrackingControls(QWidget):
         if backward_frame_idx >= ref_frame_idx:
             return
         print(backward_frame_idx, ref_frame_idx)
-        self.track((backward_frame_idx, ref_frame_idx+1), ref_frame_idx, backward_tracking=True)
+        self.track(
+            (backward_frame_idx, ref_frame_idx + 1),
+            ref_frame_idx,
+            backward_tracking=True,
+        )
 
     @Slot()
     def track_backward_end(self):
@@ -378,20 +446,23 @@ class TrackingControls(QWidget):
         backward_frame_idx: int = 0
         if backward_frame_idx >= ref_frame_idx:
             return
-        self.track((backward_frame_idx, ref_frame_idx+1), ref_frame_idx, backward_tracking=True)
+        self.track(
+            (backward_frame_idx, ref_frame_idx + 1),
+            ref_frame_idx,
+            backward_tracking=True,
+        )
 
     @Slot()
     def track_bothway(self):
         self.track_forward()
         self.trackedKeypointsAdded.connect(self.track_backward, type=Qt.ConnectionType.SingleShotConnection)
 
-
     def track(self, keypoint_range: tuple[int, int], ref_frame_idx, backward_tracking=False):
         if not self.worker_started:
             self._start_worker()
         if not self.keypoint_widget:
-            for k,v in self._viewer.window._dock_widgets.items():
-                if 'Keypoint controls' in k and 'napari-deeplabcut' in k:
+            for k, v in self._viewer.window._dock_widgets.items():
+                if "Keypoint controls" in k and "napari-deeplabcut" in k:
                     self.keypoint_widget = v.widget()
                     break
         if self.is_tracking:
@@ -399,9 +470,9 @@ class TrackingControls(QWidget):
         self._tracking_progress_bar.setFormat("%p%")
 
         if backward_tracking:
-            video_slice = self.video_layer.data[keypoint_range[0]:keypoint_range[1]][::-1]
+            video_slice = self.video_layer.data[keypoint_range[0] : keypoint_range[1]][::-1]
         else:
-            video_slice = self.video_layer.data[keypoint_range[0]:keypoint_range[1]]
+            video_slice = self.video_layer.data[keypoint_range[0] : keypoint_range[1]]
         keypoints = self.keypoint_layer.data[self.keypoint_layer.data[:, 0] == ref_frame_idx]
         keypoints[:, 0] = 0
         keypoint_features = self.keypoint_layer.features[self.keypoint_layer.data[:, 0] == ref_frame_idx]
@@ -411,26 +482,33 @@ class TrackingControls(QWidget):
             keypoints=keypoints,
             keypoint_features=keypoint_features,
             keypoint_range=keypoint_range,
-            backward_tracking=backward_tracking
+            backward_tracking=backward_tracking,
         )
         self.trackingRequested.emit(tracking_data)
 
-
     def _build_layout(self):
+        # Layout
         self.setLayout(QVBoxLayout())
         # self._tracking_method_combo.addItems(["Cotracker", "PIP"])
+        ## Model selection
         self._tracking_method_combo.addItems(TrackerType.get_all_names())
         # self._tracking_method_combo.setCurrentText("Cotracker")
         self._tracking_method_combo.setCurrentIndex(0)
         _tracking_method_layout = QHBoxLayout()
         _tracking_method_layout.addWidget(QLabel("Tracker"))
+        _tracking_method_layout.addWidget(self._model_info_button)
         _tracking_method_layout.addWidget(self._tracking_method_combo)
+        self._tracking_method_combo.currentTextChanged.connect(self._set_model_info_tooltip)
+        self._set_model_info_tooltip(self._tracking_method_combo.currentText())
+        ## Layer selection
+        ### Keypoint layer
         self._viewer.layers.events.inserted.connect(self._keypoint_layer_combo.reset_choices)
         self._viewer.layers.events.removed.connect(self._keypoint_layer_combo.reset_choices)
         self._viewer.layers.events.reordered.connect(self._keypoint_layer_combo.reset_choices)
         _keypoint_layer_method_layout = QHBoxLayout()
         _keypoint_layer_method_layout.addWidget(QLabel("Keypoints"))
         _keypoint_layer_method_layout.addWidget(self._keypoint_layer_combo.native)
+        ### Video layer
         self._viewer.layers.events.inserted.connect(self._video_layer_combo.reset_choices)
         self._viewer.layers.events.removed.connect(self._video_layer_combo.reset_choices)
         self._viewer.layers.events.reordered.connect(self._video_layer_combo.reset_choices)
@@ -438,39 +516,48 @@ class TrackingControls(QWidget):
         _video_layer_method_layout.addWidget(QLabel("Video"))
         _video_layer_method_layout.addWidget(self._video_layer_combo.native)
 
+        # Stack previous layouts
         self.layout().addLayout(_tracking_method_layout)
         self.layout().addLayout(_keypoint_layer_method_layout)
         self.layout().addLayout(_video_layer_method_layout)
-        range_controls_layout = QGridLayout() # 3 by 5
+
+        ## Frame range controls
+        range_controls_layout = QGridLayout()  # 3 by 5
         self._backward_slider.setRange(-100, 0)
         # self._backward_slider.setInvertedAppearance(True)
         range_controls_layout.addWidget(self._backward_slider, 0, 0, 1, 2)
         self._backward_spinbox_absolute.setRange(0, 100)
         self._backward_spinbox_absolute.setAlignment(Qt.AlignCenter)
-        self._backward_spinbox_absolute.setStyleSheet("""
+        self._backward_spinbox_absolute.setStyleSheet(
+            """
             QSpinBox {
                 padding: 0;
             }
-        """)
+        """
+        )
         range_controls_layout.addWidget(self._backward_spinbox_absolute, 1, 1)
         range_controls_layout.addWidget(QLabel("<< Abs"), 1, 0)
         self._backward_spinbox_relative.setRange(-100, 0)
         self._backward_spinbox_relative.setAlignment(Qt.AlignCenter)
-        self._backward_spinbox_relative.setStyleSheet("""
+        self._backward_spinbox_relative.setStyleSheet(
+            """
             QSpinBox {
                 padding: 0;
             }
-        """)
+        """
+        )
         range_controls_layout.addWidget(QLabel("<< Rel"), 2, 0)
         range_controls_layout.addWidget(self._backward_spinbox_relative, 2, 1)
-        _ref_label = QLabel("Ref")
+        _ref_label = QLabel("Current")
         self._reference_spinbox.setRange(0, 100)
         self._reference_spinbox.setAlignment(Qt.AlignCenter)
-        self._reference_spinbox.setStyleSheet("""
+        self._reference_spinbox.setStyleSheet(
+            """
             QSpinBox {
                 padding: 0;
             }
-        """)
+        """
+        )
         range_controls_layout.addWidget(self._reference_spinbox, 1, 2)
         _ref_label.setAlignment(Qt.AlignCenter)
         range_controls_layout.addWidget(_ref_label, 0, 2)
@@ -480,26 +567,31 @@ class TrackingControls(QWidget):
         range_controls_layout.addWidget(self._forward_slider, 0, 3, 1, 2)
         self._forward_spinbox_absolute.setRange(0, 100)
         self._forward_spinbox_absolute.setAlignment(Qt.AlignCenter)
-        self._forward_spinbox_absolute.setStyleSheet("""
+        self._forward_spinbox_absolute.setStyleSheet(
+            """
             QSpinBox {
                 padding: 0;
             }
-        """)
+        """
+        )
         range_controls_layout.addWidget(QLabel("Abs >>"), 1, 4)
         range_controls_layout.addWidget(self._forward_spinbox_absolute, 1, 3)
         self._forward_spinbox_relative.setRange(0, 100)
         self._forward_spinbox_relative.setAlignment(Qt.AlignCenter)
-        self._forward_spinbox_relative.setStyleSheet("""
+        self._forward_spinbox_relative.setStyleSheet(
+            """
             QSpinBox {
                 padding: 0;
             }
-        """)
+        """
+        )
         range_controls_layout.addWidget(QLabel("Rel >>"), 2, 4)
         range_controls_layout.addWidget(self._forward_spinbox_relative, 2, 3)
 
         self.layout().addLayout(range_controls_layout)
 
-        tracking_controls_layout = QGridLayout() # 2 by 3
+        ## Start/stop tracking controls
+        tracking_controls_layout = QGridLayout()  # 2 by 3
         self._tracking_backward_button.setText("⇤")
         tracking_controls_layout.addWidget(self._tracking_backward_button, 0, 0)
         self._tracking_backward_end_button.setText("⇤⇤")
