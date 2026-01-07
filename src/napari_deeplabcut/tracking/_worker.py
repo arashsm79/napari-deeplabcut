@@ -94,10 +94,12 @@ class TrackingWorker(QObject):
                 .permute(0, 3, 1, 2)[None]
             )  # (1, T, 3, H, W)
             logger.debug(f"Video chunk shape: {video_chunk.shape}, Queries shape: {queries.shape}")
-            result = self.model(video_chunk, is_first_step=is_first_step, queries=queries[None], add_support_grid=True)
-            if result is None:
-                raise RuntimeError("Tracking model returned None")
-            return result
+            return self.model(
+                video_chunk, 
+                is_first_step=is_first_step, 
+                queries=queries[None], 
+                add_support_grid=True
+                )
         # video is originally of shape (num_frames, height, width, channels)
         video = np.array(cfg.video)
         window_frames = []
@@ -132,7 +134,8 @@ class TrackingWorker(QObject):
         self.progress.emit((len(video), len(video)))
 
         tracks = pred_tracks.squeeze().cpu().numpy()
-        tracks = tracks[:, :cfg.keypoints.shape[0], :] # drop the support grid (necessary only for cotracker version < 3)
+        # we are using ct3 so we skip dropping the support grid
+        # tracks = tracks[:, :cfg.keypoints.shape[0], :] # drop the support grid (necessary only for cotracker version < 3)
         tracks = tracks.reshape(-1, 2)
         if cfg.backward_tracking:
             tracks = tracks[::-1]
