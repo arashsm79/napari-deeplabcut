@@ -3,7 +3,7 @@ name = "napari-deeplabcut"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "dask-image>=2024.5.3",
     "matplotlib>=3.9.2",
@@ -27,9 +27,10 @@ dependencies = [
 ]
 
 [tool.ruff]
-select = ["E", "F", "B", "I", "UP"]
+lint.select = ["E", "F", "B", "I", "UP"]
 target-version = "py310"
 fix = true
+line-length = 88
 
 [tool.uv]
 package = true
