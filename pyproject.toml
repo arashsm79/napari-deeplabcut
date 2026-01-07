@@ -7,7 +7,7 @@ requires-python = ">=3.9"
 dependencies = [
     "dask-image>=2024.5.3",
     "matplotlib>=3.9.2",
-    "napari==0.4.19",
+    "napari==0.6.6",
     "natsort>=8.4.0",
     "numpy>=1.21",
     "opencv-python-headless>=4.10.0.84",
