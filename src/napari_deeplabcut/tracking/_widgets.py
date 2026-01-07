@@ -1,4 +1,6 @@
 import enum
+from functools import partial
+from logging import getLogger
 
 from magicgui import magic_factory
 import pandas as pd
@@ -27,6 +29,8 @@ class KeybindConfig(enum.Enum):
     MOVE_FORWARD_FRAME = "i"
     MOVE_BACKWARD_FRAME = "u"
 
+logger = getLogger(__name__)
+logger.setLevel("DEBUG")
 
 class TrackingControls(QWidget):
     trackingRequested = Signal(TrackingWorkerData)
@@ -37,18 +41,24 @@ class TrackingControls(QWidget):
         self._viewer: Viewer = viewer
 
         # Layout
+        ## Data and model selection
         self._tracking_method_combo = QComboBox()
         self._keypoint_layer_combo: ComboBox = create_widget(annotation=Points)
         self._video_layer_combo: ComboBox = create_widget(annotation=Image)
         self._video_layer_combo.changed.connect(self._video_layer_changed)
+        ## Frame selection controls
+        self._set_ref_button = QPushButton()
+        self._reference_spinbox = QSpinBox()
+        self._updating_controls = False
+        ### Backward
         self._backward_slider = QSlider(Qt.Horizontal)
         self._backward_spinbox_absolute = QSpinBox()
         self._backward_spinbox_relative = QSpinBox()
-        self._reference_spinbox = QSpinBox()
-        self._set_ref_button = QPushButton()
+        ### Forward
         self._forward_slider = QSlider(Qt.Horizontal)
         self._forward_spinbox_absolute = QSpinBox()
         self._forward_spinbox_relative = QSpinBox()
+        ## Tracking controls
         self._tracking_stop_button = QPushButton()
         self._tracking_forward_button = QPushButton()
         self._tracking_forward_button.clicked.connect(self.track_forward)
@@ -63,15 +73,31 @@ class TrackingControls(QWidget):
         self._tracking_progress_bar = QProgressBar()
 
         # Controls
-        self._forward_slider.valueChanged.connect(self._forward_spinbox_relative.setValue)
-        self._forward_spinbox_relative.valueChanged.connect(lambda x : (self._forward_slider.setValue(x), self._forward_spinbox_absolute.setValue(self._reference_spinbox.value() + x)))
-        self._forward_spinbox_absolute.valueChanged.connect(lambda x : self._forward_spinbox_relative.setValue(x - self._reference_spinbox.value() if x - self._reference_spinbox.value() > 0 else 0))
+        ## Forward controls
+        self._forward_slider.valueChanged.connect(
+            partial(self._forward_update, from_absolute=False, from_slider=True)
+        )
+        self._forward_spinbox_relative.valueChanged.connect(
+            partial(self._forward_update, from_absolute=False, from_slider=False)
+        )
+        self._forward_spinbox_absolute.valueChanged.connect(
+            partial(self._forward_update, from_absolute=True, from_slider=False)
+        )
+        ## Backward controls
+        self._backward_slider.valueChanged.connect(
+            partial(self._backward_update, from_absolute=False, from_slider=True)
+        )
+        self._backward_spinbox_relative.valueChanged.connect(
+            partial(self._backward_update, from_absolute=False, from_slider=False)
+        )
+        self._backward_spinbox_absolute.valueChanged.connect(
+            partial(self._backward_update, from_absolute=True, from_slider=False)
+        )
 
-        self._backward_slider.valueChanged.connect(self._backward_spinbox_relative.setValue)
-        self._backward_spinbox_relative.valueChanged.connect(lambda x : (self._backward_slider.setValue(x), self._backward_spinbox_absolute.setValue(self._reference_spinbox.value() + x)))
-        self._backward_spinbox_absolute.valueChanged.connect(lambda x : self._backward_spinbox_relative.setValue(x - self._reference_spinbox.value() if x - self._reference_spinbox.value() < 0 else 0))
-
+        # when the range of viewer dims changes (e.g. on opening a new video), update the reference spinbox max
+        self._viewer.dims.events.range.connect(lambda e: self._reference_spinbox.setRange(0, e.value[0][1]-1))
         self._viewer.dims.events.current_step.connect(lambda e: self._reference_spinbox.setValue(e.value[0]))
+        self._viewer.dims.events.current_step.connect(self._update_controls)
         self._reference_spinbox.valueChanged.connect(self._update_controls)
 
         # Worker
@@ -93,6 +119,7 @@ class TrackingControls(QWidget):
         self._tracking_backward_button.setToolTip(f"Track backward ({KeybindConfig.TRACK_BACKWARD.value})")
         self._tracking_backward_end_button.setToolTip(f"Track backward to start ({KeybindConfig.TRACK_BACKWARD_END.value})")
         self._tracking_bothway_button.setToolTip(f"Track both ways")
+        self._tracking_stop_button.setToolTip(f"Stop tracking")
         self._set_ref_button.setToolTip(f"Set reference frame")
     
     def _setup_keybindings(self, viewer: "napari.viewer.Viewer"):
@@ -123,24 +150,113 @@ class TrackingControls(QWidget):
         
         self._set_tooltips()
 
-    @Slot(int)
-    def _update_controls(self, current_frame: int):
-        if self.video_layer is None:
+    def _update_controls_from_widget(self, slider, relative_spinbox, absolute_spinbox, reference_spinbox, value, direction, from_absolute=False, from_slider=False):
+        """
+        Generic function to update slider, relative spinbox, and absolute spinbox.
+    
+        Parameters:
+        - slider: The slider widget.
+        - relative_spinbox: The relative spinbox widget.
+        - absolute_spinbox: The absolute spinbox widget.
+        - reference_spinbox: The reference spinbox widget.
+        - value: The new value to set.
+        - direction: "forward" or "backward".
+        - from_absolute: Whether the update is triggered by the absolute spinbox.
+        - from_slider: Whether the update is triggered by the slider.
+        """
+        if self._updating_controls:
             return
+        self._updating_controls = True
+        try:
+            if from_absolute:
+                # Update relative and slider from absolute spinbox
+                relative_value = value - reference_spinbox.value()
+                if direction == "forward":
+                    relative_value = max(0, relative_value)
+                else:  # backward
+                    relative_value = min(0, relative_value)
+                relative_spinbox.setValue(relative_value)
+                slider.setValue(relative_value)
+            elif from_slider:
+                # Update relative and absolute spinboxes from slider
+                relative_spinbox.setValue(value)
+                absolute_spinbox.setValue(reference_spinbox.value() + value)
+            else:
+                # Update slider and absolute spinbox from relative spinbox
+                slider.setValue(value)
+                absolute_spinbox.setValue(reference_spinbox.value() + value)
+        finally:
+            self._updating_controls = False
+
+    def _forward_update(self, value: int, from_absolute: bool, from_slider: bool):
+        """Helper to update forward controls.
         
-        max_frames = self.video_layer.data.shape[0] - 1
-        self._forward_slider.setRange(0, max_frames - current_frame)
-        self._forward_spinbox_relative.setRange(0, max_frames - current_frame)
-        self._forward_spinbox_absolute.setRange(current_frame, max_frames)
-        self._forward_spinbox_absolute.setValue(current_frame+self._forward_spinbox_relative.value())
-
-        self._backward_slider.setRange(-current_frame, 0)
-        self._backward_spinbox_relative.setRange(-current_frame, 0)
-        self._backward_spinbox_absolute.setRange(0, current_frame)
-        self._backward_spinbox_absolute.setValue(current_frame+self._backward_spinbox_relative.value())
-
-        self._viewer.dims.current_step = (current_frame, *self._viewer.dims.current_step[1:])
-
+        Parameters:
+        - value: The new value to set.
+        - from_absolute: Whether the update is triggered by the absolute spinbox.
+        - from_slider: Whether the update is triggered by the slider.
+        """
+        self._update_controls_from_widget(
+            slider=self._forward_slider,
+            relative_spinbox=self._forward_spinbox_relative,
+            absolute_spinbox=self._forward_spinbox_absolute,
+            reference_spinbox=self._reference_spinbox,
+            value=value,
+            direction="forward",
+            from_absolute=from_absolute,
+            from_slider=from_slider
+        )
+        
+    def _backward_update(self, value: int, from_absolute: bool, from_slider: bool):
+        """Helper to update backward controls.
+        
+        Parameters:
+        - value: The new value to set.
+        - from_absolute: Whether the update is triggered by the absolute spinbox.
+        - from_slider: Whether the update is triggered by the slider.
+            """
+        self._update_controls_from_widget(
+            slider=self._backward_slider,
+            relative_spinbox=self._backward_spinbox_relative,
+            absolute_spinbox=self._backward_spinbox_absolute,
+            reference_spinbox=self._reference_spinbox,
+            value=value,
+            direction="backward",
+            from_absolute=from_absolute,
+            from_slider=from_slider
+        )
+        
+    @Slot()
+    def _update_controls(self):
+        if self._updating_controls:
+            return
+        self._updating_controls = True
+        try:
+            if self.video_layer is None:
+                return
+            
+            max_frames = self.video_layer.data.shape[0] - 1
+            current_frame = max(0, min(self._viewer.dims.current_step[0], max_frames))
+            
+            forward_delta = self._forward_spinbox_relative.value()
+            self._forward_slider.setRange(0, max_frames - current_frame)
+            self._forward_slider.setValue(forward_delta)
+            self._forward_spinbox_relative.setRange(0, max_frames - current_frame)
+            self._forward_spinbox_relative.setValue(forward_delta)
+            self._forward_spinbox_absolute.setRange(current_frame, max_frames)
+            self._forward_spinbox_absolute.setValue(current_frame+forward_delta) # see _forward_update
+            backward_delta = self._backward_spinbox_relative.value()
+            self._backward_slider.setRange(-current_frame, 0)
+            self._backward_slider.setValue(backward_delta)
+            self._backward_spinbox_relative.setRange(-current_frame, 0)
+            self._backward_spinbox_relative.setValue(backward_delta)
+            self._backward_spinbox_absolute.setRange(0, current_frame)
+            self._backward_spinbox_absolute.setValue(current_frame+self._backward_spinbox_relative.value()) # see _backward_update
+            
+            # self._viewer.dims.current_step = (current_frame, *self._viewer.dims.current_step[1:])
+        finally:
+            self._updating_controls = False
+            
     def _start_worker(self):
         self.is_tracking = False
         self.worker_started = False
@@ -171,7 +287,9 @@ class TrackingControls(QWidget):
 
     @Slot()
     def _video_layer_changed(self):
-        self._update_controls(0)
+        if self.viewer.dims.ndim != 3:
+            return
+        self._update_controls()
 
     @Slot()
     def tracking_started(self):
