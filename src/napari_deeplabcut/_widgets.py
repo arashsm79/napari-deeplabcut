@@ -555,6 +555,7 @@ class KeypointControls(QWidget):
         self.viewer = napari_viewer
         # This is now a standalone menu and should not be loaded with this plugin
         # self.viewer.window.add_plugin_dock_widget("napari-deeplabcut", "Tracking controls", tabify = False)
+
         self.viewer.layers.events.inserted.connect(self.on_insert)
         self.viewer.layers.events.removed.connect(self.on_remove)
 
@@ -920,7 +921,7 @@ class KeypointControls(QWidget):
         self._layout.addWidget(group_box)
 
         def _func():
-            self.label_mode = group.checkedButton().text()
+            self.label_mode = group.checkedButton().text().lower()
 
         group.buttonClicked.connect(_func)
         return group_box, group
@@ -1094,13 +1095,37 @@ class KeypointControls(QWidget):
             # Hide the color pickers, as colormaps are strictly defined by users
             controls = self.viewer.window.qt_viewer.dockLayerControls
             point_controls = controls.widget().widgets[layer]
-            point_controls.faceColorEdit.hide()
-            point_controls.edgeColorEdit.hide()
-            point_controls.layout().itemAt(9).widget().hide()
-            point_controls.layout().itemAt(11).widget().hide()
+            try:
+                face_color_controls = point_controls._face_color_control.face_color_edit
+                face_color_label = point_controls._face_color_control.face_color_label
+                face_color_controls.hide()
+                face_color_label.hide()
+            except AttributeError:
+                pass
+            try:
+                # Border color edit in latest napari versions (0.6.6)
+                edge_color_controls = point_controls._border_color_control.border_color_edit
+                border_color_label = point_controls._border_color_control.border_color_edit_label
+                edge_color_controls.hide()
+                border_color_label.hide()
+            except AttributeError:
+                pass
             # Hide out of slice checkbox
-            point_controls.outOfSliceCheckBox.hide()
-            point_controls.layout().itemAt(15).widget().hide()
+            try:
+                out_of_slice_controls = point_controls._out_slice_checkbox_control.out_of_slice_checkbox
+                out_of_slice_label = point_controls._out_slice_checkbox_control.out_of_slice_checkbox_label
+                out_of_slice_controls.hide()
+                out_of_slice_label.hide()
+            except AttributeError:
+                pass
+            # NOTE these are rather unsafe ways of hiding built-in GUI
+            # and will break with napari updates
+            # try to use the above pattern instead,
+            # also to ensure we do not break anything if the attribute is not found
+            # point_controls.layout().itemAt(9).widget().hide()
+            # point_controls.layout().itemAt(11).widget().hide()
+            # point_controls.layout().itemAt(15).widget().hide()
+
             # Add dropdown menu for colormap picking
             colormap_selector = DropdownMenu(plt.colormaps, self)
             colormap_selector.update_to(layer.metadata["colormap_name"])
@@ -1189,14 +1214,14 @@ class KeypointControls(QWidget):
         self._label_mode = keypoints.LabelMode(mode)
         self.viewer.status = self.label_mode
         mode_ = str(mode)
-        if mode_ == "Loop":
+        if mode_ == "loop":
             for menu in self._menus:
                 menu._locked = True
         else:
             for menu in self._menus:
                 menu._locked = False
         for btn in self._radio_group.buttons():
-            if btn.text() == mode_:
+            if btn.text().lower() == mode_:
                 btn.setChecked(True)
                 break
 
@@ -1250,7 +1275,7 @@ class KeypointControls(QWidget):
 @Points.bind_key("E")
 def toggle_edge_color(layer):
     # Trick to toggle between 0 and 2
-    layer.edge_width = np.bitwise_xor(layer.edge_width, 2)
+    layer.border_width = np.bitwise_xor(layer.border_width, 2)
 
 
 class DropdownMenu(QComboBox):

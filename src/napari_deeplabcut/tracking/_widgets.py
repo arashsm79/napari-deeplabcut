@@ -115,8 +115,8 @@ class TrackingControls(QWidget):
         )
 
         # when the range of viewer dims changes (e.g. on opening a new video), update the reference spinbox max
-        self._viewer.dims.events.range.connect(lambda e: self._reference_spinbox.setRange(0, e.value[0][1] - 1))
-        self._viewer.dims.events.current_step.connect(lambda e: self._reference_spinbox.setValue(e.value[0]))
+        self._viewer.dims.events.range.connect(lambda e: self._reference_spinbox.setRange(0, int(e.value[0][1]) - 1))
+        self._viewer.dims.events.current_step.connect(lambda e: self._reference_spinbox.setValue(int(e.value[0])))
         self._viewer.dims.events.current_step.connect(self._update_controls)
         self._reference_spinbox.valueChanged.connect(self._update_controls)
 

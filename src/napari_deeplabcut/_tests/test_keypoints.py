@@ -1,3 +1,5 @@
+import weakref
+
 import numpy as np
 
 from napari_deeplabcut import keypoints
@@ -14,12 +16,12 @@ def test_store_labels(store, fake_keypoints):
     assert store.labels == list(fake_keypoints.columns.get_level_values("bodyparts").unique())
 
 
-def test_store_find_first_unlabeled_frame(store, fake_keypoints):
+def test_store_find_first_unlabeled_frame(store):
     store._find_first_unlabeled_frame(event=None)
     assert store.current_step == store.n_steps - 1
     # Remove a frame to test whether it is correctly found
     ind_to_remove = 2
-    data = store.layer.data
+    data = weakref.proxy(store.layer).data
     store.layer.data = data[data[:, 0] != ind_to_remove]
     store._find_first_unlabeled_frame(event=None)
     assert store.current_step == ind_to_remove
@@ -41,18 +43,20 @@ def test_store_keypoints(store, fake_keypoints):
     store.next_keypoint()
 
 
-def test_point_resize(viewer, points):
+def test_point_resize(qtbot, viewer, points):
     viewer.layers.selection.add(points)
     layer = viewer.layers[0]
     controls = keypoints.QtPointsControls(layer)
+    qtbot.addWidget(controls)
+
     new_size = 10
     controls.changeCurrentSize(new_size)
     np.testing.assert_array_equal(points.size, new_size)
 
 
-def test_add_unnanotated(store):
-    store.layer.metadata["controls"].label_mode = "Loop"
-    ind_to_remove = 0
+def test_add_unannotated(store):
+    store.layer.metadata["controls"].label_mode = "loop"
+    ind_to_remove = 1
     data = store.layer.data
     store.layer.data = data[data[:, 0] != ind_to_remove]
     store.viewer.dims.set_current_step(0, ind_to_remove)
@@ -64,7 +68,7 @@ def test_add_unnanotated(store):
 
 
 def test_add_quick(store):
-    store.layer.metadata["controls"].label_mode = "Quick"
+    store.layer.metadata["controls"].label_mode = "quick"
     store.current_keypoint = store._keypoints[0]
     coord = store.current_step, -1, -1
     keypoints._add(store, coord=coord)

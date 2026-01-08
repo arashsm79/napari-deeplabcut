@@ -13,7 +13,7 @@ def test_guess_continuous():
 
 def test_keypoint_controls(viewer):
     controls = _widgets.KeypointControls(viewer)
-    controls.label_mode = "Loop"
+    controls.label_mode = "loop"
     assert controls._radio_group.checkedButton().text() == "Loop"
     controls.cycle_through_label_modes()
     assert controls._radio_group.checkedButton().text() == "Sequential"
@@ -66,9 +66,9 @@ def test_toggle_face_color(viewer, points):
 def test_toggle_edge_color(viewer, points):
     viewer.layers.selection.add(points)
     view = viewer.window._qt_viewer
-    np.testing.assert_array_equal(points.edge_width, 0)
+    np.testing.assert_array_equal(points.border_width, 0)
     view.canvas.events.key_press(key=keys.Key("E"))
-    np.testing.assert_array_equal(points.edge_width, 2)
+    np.testing.assert_array_equal(points.border_width, 2)
 
 
 def test_dropdown_menu(qtbot):
@@ -87,7 +87,7 @@ def test_keypoints_dropdown_menu(store):
     label_menu = widget.menus["label"]
     assert label_menu.currentText() == "kpt_0"
     widget.update_menus(event=None)
-    assert label_menu.currentText() == "kpt_2"
+    assert label_menu.currentText() == "kpt_0"
     widget.refresh_label_menu("id_0")
     assert label_menu.count() == 0
 

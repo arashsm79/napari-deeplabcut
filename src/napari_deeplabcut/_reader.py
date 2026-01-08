@@ -1,8 +1,8 @@
 import glob
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
 
 import cv2
 import dask.array as da
@@ -45,9 +45,7 @@ def get_image_reader(path):
 
 
 def get_video_reader(path):
-    if isinstance(path, str) and any(
-        path.lower().endswith(ext) for ext in SUPPORTED_VIDEOS
-    ):
+    if isinstance(path, str) and any(path.lower().endswith(ext) for ext in SUPPORTED_VIDEOS):
         return read_video
     return None
 
@@ -115,14 +113,14 @@ def read_images(path):
 def _populate_metadata(
     header: misc.DLCHeader,
     *,
-    labels: Optional[Sequence[str]] = None,
-    ids: Optional[Sequence[str]] = None,
-    likelihood: Optional[Sequence[float]] = None,
-    paths: Optional[List[str]] = None,
-    size: Optional[int] = 8,
-    pcutoff: Optional[float] = 0.6,
-    colormap: Optional[str] = "viridis",
-) -> Dict:
+    labels: Sequence[str] | None = None,
+    ids: Sequence[str] | None = None,
+    likelihood: Sequence[float] | None = None,
+    paths: list[str] | None = None,
+    size: int | None = 8,
+    pcutoff: float | None = 0.6,
+    colormap: str | None = "viridis",
+) -> dict:
     if labels is None:
         labels = header.bodyparts
     if ids is None:
@@ -143,10 +141,10 @@ def _populate_metadata(
         "face_color_cycle": face_color_cycle_maps[face_color_prop],
         "face_color": face_color_prop,
         "face_colormap": colormap,
-        # "edge_color": "valid",
-        # "edge_color_cycle": ["black", "red"],
-        # "edge_width": 0,
-        # "edge_width_is_relative": False,
+        "border_color": "valid",
+        "border_color_cycle": ["black", "red"],
+        "border_width": 0,
+        "border_width_is_relative": False,
         "size": size,
         "metadata": {
             "header": header,
@@ -173,7 +171,7 @@ def _load_config(config_path: str):
         return yaml.safe_load(file)
 
 
-def read_config(configname: str) -> List[LayerData]:
+def read_config(configname: str) -> list[LayerData]:
     config = _load_config(configname)
     header = misc.DLCHeader.from_config(config)
     metadata = _populate_metadata(
@@ -194,11 +192,11 @@ def read_config(configname: str) -> List[LayerData]:
     return [(None, metadata, "points")]
 
 
-def read_hdf(filename: str) -> List[LayerData]:
+def read_hdf(filename: str) -> list[LayerData]:
     config_path = misc.find_project_config_path(filename)
     layers = []
-    for filename in glob.iglob(filename):
-        temp = pd.read_hdf(filename)
+    for file in glob.iglob(filename):
+        temp = pd.read_hdf(file)
         temp = misc.merge_multiple_scorers(temp)
         header = misc.DLCHeader(temp.columns)
         temp = temp.droplevel("scorer", axis=1)
@@ -308,17 +306,12 @@ def read_video(filename: str, opencv: bool = True):
         try:
             stream = PyAVReaderIndexed(filename)
         except ImportError:
-            raise ImportError("`pip install av` to use the PyAV video reader.")
+            raise ImportError("`pip install av` to use the PyAV video reader.") from None
 
         shape = stream.frame_shape
         lazy_imread = delayed(stream.get_frame)
 
-    movie = da.stack(
-        [
-            da.from_delayed(lazy_imread(i), shape=shape, dtype=np.uint8)
-            for i in range(len(stream))
-        ]
-    )
+    movie = da.stack([da.from_delayed(lazy_imread(i), shape=shape, dtype=np.uint8) for i in range(len(stream))])
     elems = list(Path(filename).parts)
     elems[-2] = "labeled-data"
     elems[-1] = elems[-1].split(".")[0]
