@@ -11,6 +11,7 @@ from napari.viewer import Viewer
 from qtpy.QtCore import Qt, Signal, Slot
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QApplication,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -591,21 +593,35 @@ class TrackingControls(QWidget):
         self.layout().addLayout(range_controls_layout)
 
         ## Start/stop tracking controls
+
+        def themed_icon(name: str, fallback: QStyle.StandardPixmap) -> QIcon:
+            """Use napari's QApplication instance to get style and fallback icons."""
+            # More consistent than using Unicode characters that may vary in appearance across platforms
+            # Esp. on high-res displays they are very small (4K laptop screens etc)
+            style = QApplication.instance().style()  # reuse existing app
+            return QIcon.fromTheme(name, style.standardIcon(fallback))
+
         tracking_controls_layout = QGridLayout()  # 2 by 3
-        self._tracking_backward_button.setText("⇤")
+        # self._tracking_backward_button.setText("⇤")
+        self._tracking_backward_button.setIcon(themed_icon("go-previous", QStyle.SP_ArrowLeft))
         tracking_controls_layout.addWidget(self._tracking_backward_button, 0, 0)
-        self._tracking_backward_end_button.setText("⇤⇤")
+        # self._tracking_backward_end_button.setText("⇤⇤")
+        self._tracking_backward_end_button.setIcon(themed_icon("media-seek-backward", QStyle.SP_MediaSeekBackward))
         tracking_controls_layout.addWidget(self._tracking_backward_end_button, 1, 0)
 
-        self._tracking_stop_button.setText("□")
+        # self._tracking_stop_button.setText("□")
+        self._tracking_stop_button.setIcon(themed_icon("media-playback-stop", QStyle.SP_MediaStop))
         tracking_controls_layout.addWidget(self._tracking_stop_button, 0, 1)
 
-        self._tracking_forward_button.setText("⇥")
+        self._tracking_forward_button.setIcon(themed_icon("go-next", QStyle.SP_ArrowRight))
+        # self._tracking_forward_button.setText("⇥")
         tracking_controls_layout.addWidget(self._tracking_forward_button, 0, 2)
-        self._tracking_forward_end_button.setText("⇥⇥")
+        # self._tracking_forward_end_button.setText("⇥⇥")
+        self._tracking_forward_end_button.setIcon(themed_icon("media-seek-forward", QStyle.SP_MediaSeekForward))
         tracking_controls_layout.addWidget(self._tracking_forward_end_button, 1, 2)
 
         self._tracking_bothway_button.setText("↹")
+        # self._tracking_bothway_button.setIcon() # could not find a suitable hack or icon for the bothway button
         tracking_controls_layout.addWidget(self._tracking_bothway_button, 1, 1)
 
         self._tracking_progress_bar.setRange(0, 100)
