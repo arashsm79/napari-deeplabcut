@@ -1,6 +1,4 @@
-import glob
 import json
-import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -61,24 +59,24 @@ def get_config_reader(path):
 
 
 def get_folder_parser(path):
-    if not os.path.isdir(path):
+    if not path or not Path(path).is_dir():
         return None
 
     layers = []
-    files = os.listdir(path)
+    files = Path(path).iterdir()
     images = ""
     for file in files:
-        if any(file.lower().endswith(ext) for ext in SUPPORTED_IMAGES):
-            images = os.path.join(path, f"*{os.path.splitext(file)[1]}")
+        if any(file.name.lower().endswith(ext) for ext in SUPPORTED_IMAGES):
+            images = str(Path(path) / f"*{Path(file.name).suffix}")
             break
     if not images:
         raise OSError(f"No supported images were found in {path}.")
 
     layers.extend(read_images(images))
     datafile = ""
-    for file in os.listdir(path):
-        if file.endswith(".h5"):
-            datafile = os.path.join(path, "*.h5")
+    for file in Path(path).iterdir():
+        if file.name.endswith(".h5"):
+            datafile = str(file)  # Use the actual file name
             break
     if datafile:
         layers.extend(read_hdf(datafile))
@@ -88,24 +86,24 @@ def get_folder_parser(path):
 
 def read_images(path):
     if isinstance(path, list):
-        root, ext = os.path.splitext(path[0])
-        path = os.path.join(os.path.dirname(root), f"*{ext}")
+        _root, ext = Path(path[0]).with_suffix("").suffixes[0], Path(path[0]).suffixes[1]
+        path = str(Path(path[0]).parent / f"*{ext}")
     # Retrieve filepaths exactly as parsed by pims
     filepaths = []
-    for filepath in glob.iglob(path):
+    for filepath in Path(path).parent.glob(Path(path).name):
         relpath = Path(filepath).parts[-3:]
-        filepaths.append(os.path.join(*relpath))
+        filepaths.append(str(Path(*relpath)))
     params = {
         "name": "images",
         "metadata": {
             "paths": natsorted(filepaths),
-            "root": os.path.split(path)[0],
+            "root": str(Path(path).parent),
         },
     }
 
     # https://github.com/soft-matter/pims/issues/452
     if len(filepaths) == 1:
-        path = glob.glob(path)[0]
+        path = next(Path(path).parent.glob(Path(path).name))
 
     return [(imread(path), params, "image")]
 
@@ -184,7 +182,7 @@ def read_config(configname: str) -> list[LayerData]:
     metadata["name"] = f"CollectedData_{config['scorer']}"
     metadata["ndim"] = 3
     metadata["property_choices"] = metadata.pop("properties")
-    metadata["metadata"]["project"] = os.path.dirname(configname)
+    metadata["metadata"]["project"] = str(Path(configname).parent)
     conversion_tables = config.get("SuperAnimalConversionTables")
     if conversion_tables is not None:
         super_animal, table = conversion_tables.popitem()
@@ -195,7 +193,7 @@ def read_config(configname: str) -> list[LayerData]:
 def read_hdf(filename: str) -> list[LayerData]:
     config_path = misc.find_project_config_path(filename)
     layers = []
-    for file in glob.iglob(filename):
+    for file in Path(filename).parent.glob(Path(filename).name):
         temp = pd.read_hdf(file)
         temp = misc.merge_multiple_scorers(temp)
         header = misc.DLCHeader(temp.columns)
@@ -214,7 +212,7 @@ def read_hdf(filename: str) -> list[LayerData]:
         else:
             colormap = "Set3"
         if isinstance(temp.index, pd.MultiIndex):
-            temp.index = [os.path.join(*row) for row in temp.index]
+            temp.index = [str(Path(*row)) for row in temp.index]
         df = (
             temp.stack(["individuals", "bodyparts"])
             .reindex(header.individuals, level="individuals")
@@ -242,8 +240,8 @@ def read_hdf(filename: str) -> list[LayerData]:
             paths=list(paths2inds),
             colormap=colormap,
         )
-        metadata["name"] = os.path.split(filename)[1].split(".")[0]
-        metadata["metadata"]["root"] = os.path.split(filename)[0]
+        metadata["name"] = Path(filename).stem
+        metadata["metadata"]["root"] = str(Path(filename).parent)
         # Store file name in case the layer's name is edited by the user
         metadata["metadata"]["name"] = metadata["name"]
         layers.append((data, metadata, "points"))
@@ -252,7 +250,7 @@ def read_hdf(filename: str) -> list[LayerData]:
 
 class Video:
     def __init__(self, video_path):
-        if not os.path.isfile(video_path):
+        if not Path(video_path).is_file():
             raise ValueError(f'Video path "{video_path}" does not point to a file.')
 
         self.path = video_path
@@ -314,8 +312,8 @@ def read_video(filename: str, opencv: bool = True):
     movie = da.stack([da.from_delayed(lazy_imread(i), shape=shape, dtype=np.uint8) for i in range(len(stream))])
     elems = list(Path(filename).parts)
     elems[-2] = "labeled-data"
-    elems[-1] = elems[-1].split(".")[0]
-    root = os.path.join(*elems)
+    elems[-1] = Path(elems[-1]).stem + Path(filename).suffix
+    root = str(Path(*elems))
     params = {
         "name": filename,
         "metadata": {
