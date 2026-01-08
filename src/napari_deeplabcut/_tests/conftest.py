@@ -15,7 +15,7 @@ os.environ["NAPARI_ASYNC"] = "0"  # avoid async teardown surprises in tests
 os.environ["PYTHONFAULTHANDLER"] = "1"  # better segfault traces in CI
 # os.environ["QT_QPA_PLATFORM"] = "offscreen"  # headless QT for CI
 # os.environ["QT_OPENGL"] = "software"  # avoid some CI issues with OpenGL
-os.environ["PYTEST_QT_API"] = "pyqt6"
+# os.environ["PYTEST_QT_API"] = "pyqt6" 3 only for local testing with pyqt6, we use pyside6 otherwise
 
 
 @pytest.fixture
