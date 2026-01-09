@@ -28,12 +28,9 @@ from qtpy.QtWidgets import (
 )
 
 from napari_deeplabcut.keypoints import KeypointStore
-from napari_deeplabcut.tracking._worker import (
-    TrackerInfo,
-    TrackerType,
-    TrackingWorker,
-    TrackingWorkerData,
-)
+from napari_deeplabcut.tracking._data import TrackingWorkerData, TrackingWorkerOutput
+from napari_deeplabcut.tracking._models import AVAILABLE_TRACKERS
+from napari_deeplabcut.tracking._worker import TrackingWorker
 
 # Keybinds
 TRACKING_SHORTCUTS_ENABLED = os.environ.get("NAPARI_DLC_TRACKING_SHORTCUTS_ENABLED", "1") == "1"
@@ -149,9 +146,10 @@ class TrackingControls(QWidget):
 
     def _set_model_info_tooltip(self, current_model_name: str = None):
         """Retrieves the display info for the selected model and sets it as tooltip for the model info button."""
-        tracker_info = TrackerInfo.get_info_from_name(current_model_name)
-        if tracker_info is not None and tracker_info.info_text:
-            self._model_info_button.setToolTip(tracker_info.info_text)
+        tracker_info = AVAILABLE_TRACKERS.get(current_model_name, None)
+        tracker_info = tracker_info["class"].info_text if tracker_info is not None else None
+        if tracker_info is not None:
+            self._model_info_button.setToolTip(tracker_info)
         else:
             self._model_info_button.setToolTip("")
 
@@ -368,11 +366,20 @@ class TrackingControls(QWidget):
         self.is_tracking = True
         self._tracking_progress_bar.setValue(0)
 
-    @Slot(TrackingWorkerData)
-    def tracking_finished(self, trackingdata: TrackingWorkerData):
+    @Slot(TrackingWorkerOutput)
+    def tracking_finished(self, out: TrackingWorkerOutput):
         self.is_tracking = False
         try:
-            self.add_keypoints_to_layer(trackingdata.keypoints, trackingdata.keypoint_features)
+            try:
+                new_features_df = (
+                    out.keypoint_features
+                    if isinstance(out.keypoint_features, pd.DataFrame)
+                    else pd.DataFrame(out.keypoint_features)
+                )
+            except ValueError as e:
+                logger.error(f"Failed to convert keypoint features to DataFrame: {e}")
+                new_features_df = pd.DataFrame()
+            self.add_keypoints_to_layer(out.keypoints, new_features_df)
         except Exception as e:
             print(e)
         self._tracking_progress_bar.setValue(self._tracking_progress_bar.maximum())
@@ -494,7 +501,7 @@ class TrackingControls(QWidget):
         keypoints[:, 0] = 0
         keypoint_features = self.keypoint_layer.features[self.keypoint_layer.data[:, 0] == ref_frame_idx]
         tracking_data = TrackingWorkerData(
-            tracker=TrackerType.get_from_name(self._tracking_method_combo.currentText()),
+            tracker_name=self._tracking_method_combo.currentText(),  # do not instantiate yet
             video=video_slice,
             keypoints=keypoints,
             keypoint_features=keypoint_features,
@@ -508,7 +515,7 @@ class TrackingControls(QWidget):
         self.setLayout(QVBoxLayout())
         # self._tracking_method_combo.addItems(["Cotracker", "PIP"])
         ## Model selection
-        self._tracking_method_combo.addItems(TrackerType.get_all_names())
+        self._tracking_method_combo.addItems(AVAILABLE_TRACKERS.keys())
         # self._tracking_method_combo.setCurrentText("Cotracker")
         self._tracking_method_combo.setCurrentIndex(0)
 
