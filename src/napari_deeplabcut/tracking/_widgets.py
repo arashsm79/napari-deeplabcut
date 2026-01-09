@@ -511,9 +511,14 @@ class TrackingControls(QWidget):
         self._tracking_method_combo.addItems(TrackerType.get_all_names())
         # self._tracking_method_combo.setCurrentText("Cotracker")
         self._tracking_method_combo.setCurrentIndex(0)
+
+        _model_info_layout = QHBoxLayout()
+        _model_info_layout.addWidget(QLabel("Tracker"))
+        _model_info_layout.addWidget(self._model_info_button)
+        # _model_info_layout.addStretch(1)
+
         _tracking_method_layout = QHBoxLayout()
-        _tracking_method_layout.addWidget(QLabel("Tracker"))
-        _tracking_method_layout.addWidget(self._model_info_button)
+        _tracking_method_layout.addLayout(_model_info_layout)
         _tracking_method_layout.addWidget(self._tracking_method_combo)
         self._tracking_method_combo.currentTextChanged.connect(self._set_model_info_tooltip)
         self._set_model_info_tooltip(self._tracking_method_combo.currentText())
@@ -635,8 +640,9 @@ class TrackingControls(QWidget):
         self._tracking_forward_end_button.setIcon(themed_icon("media-seek-forward", QStyle.SP_MediaSeekForward))
         tracking_controls_layout.addWidget(self._tracking_forward_end_button, 1, 2)
 
-        self._tracking_bothway_button.setText("↹")
-        # self._tracking_bothway_button.setIcon() # could not find a suitable hack or icon for the bothway button
+        # self._tracking_bothway_button.setText("↹")
+        # TODO : better icon ? Not really any standard icon for "both way"
+        self._tracking_bothway_button.setIcon(themed_icon("view-refresh", QStyle.SP_BrowserReload))
         tracking_controls_layout.addWidget(self._tracking_bothway_button, 1, 1)
 
         self._tracking_progress_bar.setRange(0, 100)
