@@ -8,9 +8,7 @@ from skimage.io import imsave
 
 from napari_deeplabcut import _writer, keypoints
 
-os.environ["hide_tutorial"] = "True"
-
-
+os.environ["NAPARI_DLC_HIDE_TUTORIAL"] = "True"
 os.environ["NAPARI_ASYNC"] = "0"  # avoid async teardown surprises in tests
 os.environ["PYTHONFAULTHANDLER"] = "1"  # better segfault traces in CI
 # os.environ["QT_QPA_PLATFORM"] = "offscreen"  # headless QT for CI

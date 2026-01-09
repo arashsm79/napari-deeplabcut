@@ -683,7 +683,7 @@ class KeypointControls(QWidget):
 
         # Disable tutorial on first launch for now. Can be accessed any time from the button.
         # if self.settings.value("first_launch", True) and not os.environ.get(
-        #     "hide_tutorial", False
+        #     "NAPARI_DLC_HIDE_TUTORIAL", False
         # ):
         #     QTimer.singleShot(10, self.start_tutorial)
         #     self.settings.setValue("first_launch", False)
