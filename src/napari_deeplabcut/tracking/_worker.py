@@ -1,17 +1,27 @@
-import enum
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import numpy as np
-import pandas as pd
+import torch
 from qtpy.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
+
+from napari_deeplabcut.tracking._data import (
+    RawModelOutputs,
+    TrackingModelInputs,
+    TrackingWorkerData,
+    TrackingWorkerOutput,
+)
+from napari_deeplabcut.tracking._models import AVAILABLE_TRACKERS
+
+if TYPE_CHECKING:
+    pass
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 DEBUG = True
 if DEBUG:
-    import debugpy
+    pass
 
 
 @dataclass
@@ -20,161 +30,82 @@ class TorchHubModel:
     model: str
 
 
-@dataclass(frozen=True)
-class TrackerInfo:
-    name: str
-    torchhub: TorchHubModel
-    info_text: str = ""
-
-    def load_model(self, device: str):
-        import torch
-
-        model = torch.hub.load(
-            self.torchhub.org,
-            self.torchhub.model,
-        ).to(device)
-        return model
-
-    @staticmethod
-    def get_info_from_name(name: str) -> "TrackerInfo | None":
-        """Get the TrackerInfo dataclass from its name."""
-        if name is not None:
-            for tracker in TrackerType:
-                if tracker.value.name == name:
-                    return tracker.value
-        return None
-
-
-class TrackerType(enum.Enum):
-    COTRACKER = TrackerInfo(
-        name="Cotracker 3",
-        torchhub=TorchHubModel(
-            org="facebookresearch/co-tracker",
-            model="cotracker3_online",
-        ),
-        info_text="Cotracker 3 model from Facebook Research.\n"
-        "See https://cotracker3.github.io/ and CoTracker3: "
-        "Simpler and Better Point Tracking by "
-        "Pseudo-Labelling Real Videos by Karaev et al., 2024.",
-    )
-
-    def get_all_names() -> list[str]:
-        """Get a list of all implemented tracker names."""
-        return [tracker.value.name for tracker in TrackerType]
-
-    def get_from_name(name: str) -> "TrackerType | None":
-        """Get the TrackerType enum member from its name."""
-        for tracker in TrackerType:
-            if tracker.value.name == name:
-                return tracker
-        return None
-
-
-@dataclass
-class TrackingWorkerData:
-    tracker: TrackerType
-    video: np.ndarray
-    keypoints: np.ndarray  # (num_keypoint, 3)
-    # [0]: frame number in `video` [1]: x, [2]: y
-    keypoint_features: dict
-    keypoint_range: tuple[int, int]
-    backward_tracking: bool
-
-
 class TrackingWorker(QObject):
     started = Signal()
     finished = Signal()
     progress = Signal(tuple)
     trackingStarted = Signal()
-    trackingFinished = Signal(TrackingWorkerData)
+    trackingFinished = Signal(TrackingWorkerOutput)
     trackingStopped = Signal()
 
     def __init__(self):
         super().__init__()
-        import torch
-
         self.is_stopped = False
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"  # TODO implement MPS support
-        self.model: object | None = None
 
     @Slot(TrackingWorkerData)
     def track(self, cfg: TrackingWorkerData):
-        if DEBUG:
-            debugpy.debug_this_thread()
-        import torch
-
-        if self.model is None:
-            self.model = cfg.tracker.value.load_model(self.device)
-            self.model.eval()
-
-        def _process_step(window_frames, is_first_step, queries):
-            # NOTE ideally each model should have its own processing
-            # function implemented separately and return the same format
-            video_chunk = (
-                torch.tensor(np.stack(window_frames[-self.model.step * 2 :]), device=self.device)
-                .float()
-                .permute(0, 3, 1, 2)[None]
-            )  # (1, T, 3, H, W)
-            logger.debug(f"Video chunk shape: {video_chunk.shape},Queries shape: {queries.shape}")
-            return self.model(
-                video_chunk,
-                is_first_step=is_first_step,
-                queries=queries[None],
-                add_support_grid=True,
-            )
-
-        # video is originally of shape (num_frames, height, width, channels)
-        video = np.array(cfg.video)
-        window_frames = []
-
-        # We need to swap x, y so that it matches what cotracker expects
-        cfg.keypoints[:, [1, 2]] = cfg.keypoints[:, [2, 1]]
-
-        queries = torch.from_numpy(cfg.keypoints).to(self.device).float()
-
-        # Iterating over video frames, processing one window at a time:
-        is_first_step = True
-        for i, frame in enumerate(video):
-            if i % self.model.step == 0 and i != 0:
-                pred_tracks, _pred_visibility = _process_step(window_frames, is_first_step, queries=queries)
-                is_first_step = False
-            window_frames.append(frame)
-            self.progress.emit((i, len(video)))
-            if self._should_stop():
+        """
+        Tracking core logic:
+            1. Instantiate model from registry.
+            2. prepare_inputs(cfg)
+            3. run(inputs, progress_cb, stop_cb)
+            4. prepare_outputs(raw, inputs)
+            5. Emit results to the plugin.
+        """
+        model = None
+        try:
+            # Choose model by name from your TrackerType (cfg.tracker.value.name)
+            # if DEBUG:
+            #     debugpy.debug_this_thread()
+            model_name = cfg.tracker_name
+            try:
+                model_cls = AVAILABLE_TRACKERS[model_name]["class"]
+            except KeyError:
+                logger.error(f"Unknown tracker: {model_name}")
+                self.trackingStopped.emit()
                 return
 
-        # Processing final frames in case video length is not a multiple of model.step
-        # TODO: Use visibility
-        logger.debug(f"Window frames shape before final processing:{np.array(window_frames).shape}")
-        pred_tracks, _pred_visibility = _process_step(
-            window_frames[-(i % self.model.step) - self.model.step - 1 :],
-            is_first_step,
-            queries=queries,
-        )
-        if DEBUG and pred_tracks is None:
-            debugpy.breakpoint()
-        logger.debug(f"Predicted tracks : {pred_tracks}")
-        logger.debug(f"Predicted visibility: {_pred_visibility}")
-        self.progress.emit((len(video), len(video)))
+            model = model_cls(cfg)
 
-        tracks = pred_tracks.squeeze().cpu().numpy()
-        # drop the support grid (necessary only for cotracker version < 3)
-        # as we are using ct3, we skip dropping the support grid
-        # tracks = tracks[:, :cfg.keypoints.shape[0], :]
-        tracks = tracks.reshape(-1, 2)
-        if cfg.backward_tracking:
-            tracks = tracks[::-1]
-        frame_ids = np.repeat(
-            np.arange(cfg.keypoint_range[0], cfg.keypoint_range[1]),
-            cfg.keypoints.shape[0],
-        )
-        tracks = np.column_stack((frame_ids, tracks))
-        cfg.keypoint_features = pd.concat([cfg.keypoint_features] * len(np.unique(tracks[:, 0])), ignore_index=True)
-        cfg.keypoints = tracks
-        cfg.keypoints[:, [1, 2]] = cfg.keypoints[:, [2, 1]]
-        self.trackingFinished.emit(cfg)
+            # Define callbacks to let the model report status
+            def progress_callback(current: int, total: int):
+                self.progress.emit((current, total))
 
-        # self.model = None  # free up memory ?
+            def stop_callback() -> bool:
+                # Return early if requested
+                return self._should_stop()
+
+            try:
+                # we let the model handle coordinate conventions internally, such that
+                # the worker and plugin can remain agnostic to these details.
+                inputs: TrackingModelInputs = model.prepare_inputs(cfg)
+
+                # Run inference; models implement their own batching and chunking
+                raw: RawModelOutputs = model.run(inputs, progress_callback, stop_callback)
+
+                # Convert to canonical output (N,3) plus features
+                output: TrackingWorkerOutput = model.prepare_outputs(raw, cfg)
+
+                if hasattr(model, "validate_outputs") and not model.validate_outputs(inputs, output):
+                    valid, msg = model.validate_outputs(inputs, output)
+                    if not valid:
+                        raise ValueError(f"Invalid model outputs: {msg}")
+            except Exception as exc:
+                logger.exception("Tracking failed", exc_info=exc)
+                self.trackingStopped.emit()
+                return
+
+            # Old : update the worker cfg & keep existing signal type
+            # cfg.keypoints = output.keypoints
+            # cfg.keypoint_features = output.keypoint_features
+            # self.trackingFinished.emit(cfg)
+
+            # Use the new signal type only and keep cfg immutable
+            self.trackingFinished.emit(output)
+        finally:
+            torch.cuda.empty_cache()
+            if model is not None:
+                del model
 
     def run(self):
         self.started.emit()
