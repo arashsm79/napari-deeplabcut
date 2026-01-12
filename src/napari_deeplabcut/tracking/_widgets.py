@@ -478,6 +478,13 @@ class TrackingControls(QWidget):
 
     @Slot()
     def track_bothway(self):
+        # if forward target is invalid, go directly backward
+        ref = self._reference_spinbox.value()
+        fwd = self._forward_spinbox_absolute.value()
+        if fwd <= ref:
+            self.track_backward()
+            return
+
         self.track_forward()
         self.trackedKeypointsAdded.connect(self.track_backward, type=Qt.ConnectionType.SingleShotConnection)
 

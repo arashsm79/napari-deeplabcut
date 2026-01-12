@@ -52,6 +52,7 @@ class TrackingWorker(QObject):
             4. prepare_outputs(raw, inputs)
             5. Emit results to the plugin.
         """
+        model = None
         try:
             # Choose model by name from your TrackerType (cfg.tracker.value.name)
             # if DEBUG:
@@ -103,7 +104,8 @@ class TrackingWorker(QObject):
             self.trackingFinished.emit(output)
         finally:
             torch.cuda.empty_cache()
-            del model
+            if model is not None:
+                del model
 
     def run(self):
         self.started.emit()
