@@ -15,21 +15,18 @@ from napari_deeplabcut.tracking._data import (
 )
 from napari_deeplabcut.tracking._models import AVAILABLE_TRACKERS, TrackingModel
 
-os.environ["NAPARI_DLC_HIDE_TUTORIAL"] = "True"
+# os.environ["NAPARI_DLC_HIDE_TUTORIAL"] = "True" # no longer on by default
+
 os.environ["NAPARI_ASYNC"] = "0"  # avoid async teardown surprises in tests
-os.environ["PYTHONFAULTHANDLER"] = "1"  # better segfault traces in CI
+# os.environ["PYTHONFAULTHANDLER"] = "1"  # better segfault traces in CI
 # os.environ["QT_QPA_PLATFORM"] = "offscreen"  # headless QT for CI
 # os.environ["QT_OPENGL"] = "software"  # avoid some CI issues with OpenGL
-# os.environ["PYTEST_QT_API"] = "pyqt6" 3 only for local testing with pyqt6, we use pyside6 otherwise
+# os.environ["PYTEST_QT_API"] = "pyqt6" # only for local testing with pyqt6, we use pyside6 otherwise
 
 
 @pytest.fixture
 def viewer(make_napari_viewer_proxy):
     viewer = make_napari_viewer_proxy()
-    # for action in viewer.window.plugins_menu.actions():
-    #     if "deeplabcut" in action.text():
-    #         action.trigger()
-    #         break
 
     # Safer : explicitly add the dock widgets
     keypoints_dock_widget, keypoints_plugin_widget = viewer.window.add_plugin_dock_widget(
@@ -80,13 +77,7 @@ def points(tmp_path_factory, viewer, fake_keypoints, qtbot):
     fake_keypoints.to_hdf(output_path, key="data")
     layer = viewer.open(output_path, plugin="napari-deeplabcut")[0]
 
-    # try:
     return layer
-    # finally:
-    # controls = layer.metadata.pop("controls", None)
-    # if controls is not None:
-    #     controls.deleteLater()
-    #     qtbot.wait(50)
 
 
 @pytest.fixture
@@ -104,15 +95,6 @@ def images(tmp_path_factory, viewer, fake_image):
 @pytest.fixture
 def store(viewer, points):
     return keypoints.KeypointStore(viewer, points)
-    # controls = s.layer.metadata.get("controls", None)
-    # if controls is not None:
-    #     controls.deleteLater()
-    #     qtbot.wait(50)
-    # try:
-    # yield s
-    # finally:
-    # s.close()  # disconnects signals & drops references
-    # qtbot.wait(100)
 
 
 @pytest.fixture(scope="session")
